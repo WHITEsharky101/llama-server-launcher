@@ -6,11 +6,9 @@ Scans for GGUF models, manages configurations, and launches llama server.
 """
 
 import os
-import sys
 import json
 import copy
 import subprocess
-import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -25,13 +23,13 @@ DEFAULT_CONFIG = {
     "port": 5056,
     "api_key": "ek-cvpxgU0aMOLzFhbwOs3XcVgH8jyWpHqdX7cRRIlbtzwKtF7LvV",
     "defaults": {
-        "context": "32768",
-        "gpu_offload": "99",
-        "cpu_moe": "none",
+        "context": 32768,
+        "gpu_offload": 99,
+        "cpu_moe": None,
         "threads": 8,
         "batch_size": 512,
-        "mmap": "off",
-        "flash_attention": "on",
+        "mmap": False,
+        "flash_attention": True,
         "k_quant": "turbo3",
         "v_quant": "turbo3",
         "temp": 1,
@@ -39,9 +37,9 @@ DEFAULT_CONFIG = {
         "top_p": 0.95,
         "min_p": 0.05,
         "repeat_penalty": 1.1,
-        "presence_penalty": "none",
-        "thinking": "none",
-        "jinja": "none"
+        "presence_penalty": None,
+        "thinking": None,
+        "jinja": None
     }
 }
 
@@ -254,25 +252,24 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
 
         if key in toggle_settings:
             # Show selection options for toggle-like settings
-            options = ["on", "off", "none"]
             print(f"Select value for {name}:")
-            for i, opt in enumerate(options, 1):
-                print(f"  {i}. {opt}")
+            print("  1. on")
+            print("  2. off")
+            print("  3. none")
             
             while True:
                 choice = input("> ").strip()
-                if choice == "":
-                    settings[key] = "none"
+                if choice in ("", "3"):
+                    settings[key] = None
                     break
-                try:
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(options):
-                        settings[key] = options[idx]
-                        break
-                    else:
-                        print(f"Invalid choice. Enter 1-{len(options)} or leave empty for 'none'")
-                except ValueError:
-                    print("Invalid input.")
+                elif choice == "1":
+                    settings[key] = True   # on
+                    break
+                elif choice == "2":
+                    settings[key] = False  # off
+                    break
+                else:
+                    print("Invalid choice. Enter 1 (on), 2 (off), or 3/empty (none)")
 
         elif key in kv_quant_settings:
             # Show selection options for KV quant settings
@@ -282,13 +279,14 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             
             while True:
                 choice = input("> ").strip()
-                if choice == "":
-                    settings[key] = "none"
+                if choice == "" or choice == "6":
+                    settings[key] = None
                     break
                 try:
                     idx = int(choice) - 1
                     if 0 <= idx < len(KV_QUANT_OPTIONS):
-                        settings[key] = KV_QUANT_OPTIONS[idx]
+                        val = KV_QUANT_OPTIONS[idx]
+                        settings[key] = None if val == "none" else val
                         break
                     else:
                         print(f"Invalid choice. Enter 1-{len(KV_QUANT_OPTIONS)} or leave empty for 'none'")
@@ -299,8 +297,8 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             # Free text input for numeric/text settings
             print("Enter new value (or 'none' to skip this parameter):")
             new_value = input("> ").strip().lower()
-            if new_value == "none" or new_value == "":
-                settings[key] = "none"
+            if new_value == "none" or new_value == "" or new_value == "null":
+                settings[key] = None
             else:
                 # Try to convert to appropriate numeric type
                 try:
@@ -337,10 +335,10 @@ SIMPLE_PARAM_MAP = [
 ]
 
 
-def _add_simple_param(cmd: List[str], key: str, flag: str, value: str) -> None:
-    """Add a simple parameter to the command if value is not 'none' or empty."""
-    if value and value.lower() != "none":
-        cmd.extend([flag, value])
+def _add_simple_param(cmd: List[str], flag: str, value: Any) -> None:
+    """Add a simple parameter to the command if value is not None, False, or 0."""
+    if value is not None and value is not False and value != 0:
+        cmd.extend([flag, str(value)])
 
 
 def build_command(model_path: str, settings: Dict[str, Any], host: str, port: int, api_key: str) -> List[str]:
@@ -354,30 +352,29 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
 
     # --- Simple parameters (flag + value) ---
     for key, flag in SIMPLE_PARAM_MAP:
-        _add_simple_param(cmd, key, flag, str(settings.get(key, "")))
+        _add_simple_param(cmd, flag, settings.get(key))
 
     # --- Special parameters (non-standard logic) ---
-    # mmap (--no-mmap)
-    mmap = str(settings.get("mmap", ""))
-    if mmap and mmap.lower() == "off":
+    # mmap (--no-mmap): False means --no-mmap, True means nothing special
+    mmap = settings.get("mmap")
+    if mmap is False:
         cmd.append("--no-mmap")
 
-    # Flash Attention (--flash-attn)
-    fa = str(settings.get("flash_attention", ""))
-    if fa and fa.lower() == "on":
+    # Flash Attention (--flash-attn): True means enable
+    fa = settings.get("flash_attention")
+    if fa is True:
         cmd.extend(["--flash-attn", "on"])
 
-    # Thinking (--chat-template-kwargs)
-    thinking = str(settings.get("thinking", ""))
-    if thinking and thinking.lower() not in ["none", ""]:
-        if thinking.lower() in ["on", "true"]:
-            cmd.extend(["--chat-template-kwargs", '{"enable_thinking":true}'])
-        elif thinking.lower() in ["off", "false"]:
-            cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])
+    # Thinking (--chat-template-kwargs): True/False for enable_thinking
+    thinking = settings.get("thinking")
+    if thinking is True:
+        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":true}'])
+    elif thinking is False:
+        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])
 
-    # Jinja (--jinja)
-    jinja = str(settings.get("jinja", ""))
-    if jinja and jinja.lower() in ["on", "true"]:
+    # Jinja (--jinja): True means enable
+    jinja = settings.get("jinja")
+    if jinja is True:
         cmd.append("--jinja")
 
     # --- Server Settings ---
