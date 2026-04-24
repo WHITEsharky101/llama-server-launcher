@@ -421,31 +421,47 @@ def launch_server(cmd: List[str]) -> None:
         print(f"\n[ERROR] Failed to launch server: {e}")
 
 
-def select_model(models: List[Dict[str, str]], allow_cancel: bool = False) -> Optional[Dict[str, str]]:
+def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_model: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
     """Display model list and prompt user to select one.
     
+    If last_model is provided and the user enters an empty string, returns last_model.
     Returns the selected model dict, or None if cancelled (when allow_cancel=True).
     """
     print("\n--- Select a model ---\n")
     for i, model in enumerate(models, 1):
         print(f"  {i}. {model['display']}")
 
-    prompt = "Select model by number: "
+    parts = []
     if allow_cancel:
-        prompt = "Select model by number (or 0 to cancel): "
+        parts.append("0 to cancel")
+    if last_model is not None:
+        parts.append(f"Enter for {last_model['display']}")
+    
+    if parts:
+        prompt = f"Select model by number (or {', '.join(parts)}): "
+    else:
+        prompt = "Select model by number: "
 
     while True:
+        choice = input(prompt).strip()
+        
+        # Handle empty input -> use last model
+        if choice == "" and last_model is not None:
+            return last_model
+        
+        if allow_cancel and choice == "0":
+            return None
+        
         try:
-            choice = input(prompt).strip()
-            if allow_cancel and choice == "0":
-                return None
             idx = int(choice) - 1
             if 0 <= idx < len(models):
                 return models[idx]
             else:
                 print(f"Invalid choice. Please enter 1-{len(models)}")
         except ValueError:
-            print("Invalid input. Please enter a number.")
+            # Empty input with no last model is handled above; otherwise invalid
+            if choice != "":
+                print("Invalid input. Please enter a number.")
 
 
 def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]) -> tuple:
@@ -509,8 +525,17 @@ def main():
 
     print(f"[OK] Found {len(models)} model(s).")
 
-    # Select model
-    selected_model = select_model(models)
+    # Get last used model from config (if any)
+    last_model_key = config.get("last_model", None)
+    last_model = None
+    if last_model_key:
+        for m in models:
+            if m["path"] == last_model_key:
+                last_model = m
+                break
+
+    # Select model (empty input uses last model, if available)
+    selected_model = select_model(models, allow_cancel=False, last_model=last_model)
     model_key, model_settings = apply_model_selection(selected_model, config)
 
     # Inner loop for settings; outer loop allows returning to model selection
@@ -525,19 +550,14 @@ def main():
         action = input("\nSelect (1/2/3/4): ").strip()
 
         if action == "1":
-            # Confirm launch
+            # Show configuration and launch immediately
             print("\n" + "=" * 60)
             print("Server Configuration:")
             print(f"  Host:    {host}")
             print(f"  Port:    {port}")
             print(f"  Model:   {selected_model['display']}")
             print("=" * 60)
-
-            confirm = input("\nLaunch server? (y/n): ").strip().lower()
-            if confirm in ["y", "yes"]:
-                launching = True
-            else:
-                print("Launch cancelled.")
+            launching = True
         elif action == "2":
             # Modify settings
             model_settings = edit_settings(model_settings)
@@ -545,8 +565,8 @@ def main():
             config = save_model_config(config, model_key, model_settings)
             display_settings(model_settings)
         elif action == "3":
-            # Return to model selection
-            new_model = select_model(models, allow_cancel=True)
+            # Return to model selection (empty input reuses current model)
+            new_model = select_model(models, allow_cancel=True, last_model=selected_model)
             if new_model is None:
                 print("Model change cancelled.")
                 continue
@@ -558,6 +578,10 @@ def main():
             return
         else:
             print("Invalid choice. Try again.")
+
+    # Save last used model to config before launching
+    config["last_model"] = model_key
+    save_config(config)
 
     # Build and launch command
     cmd = build_command(
