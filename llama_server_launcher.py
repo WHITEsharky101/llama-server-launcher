@@ -421,6 +421,58 @@ def launch_server(cmd: List[str]) -> None:
         print(f"\n[ERROR] Failed to launch server: {e}")
 
 
+def select_model(models: List[Dict[str, str]], allow_cancel: bool = False) -> Optional[Dict[str, str]]:
+    """Display model list and prompt user to select one.
+    
+    Returns the selected model dict, or None if cancelled (when allow_cancel=True).
+    """
+    print("\n--- Select a model ---\n")
+    for i, model in enumerate(models, 1):
+        print(f"  {i}. {model['display']}")
+
+    prompt = "Select model by number: "
+    if allow_cancel:
+        prompt = "Select model by number (or 0 to cancel): "
+
+    while True:
+        try:
+            choice = input(prompt).strip()
+            if allow_cancel and choice == "0":
+                return None
+            idx = int(choice) - 1
+            if 0 <= idx < len(models):
+                return models[idx]
+            else:
+                print(f"Invalid choice. Please enter 1-{len(models)}")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+
+
+def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]) -> tuple:
+    """Apply model selection: load config, display settings.
+
+    Returns (model_key, model_settings) tuple.
+    """
+    print(f"\n[OK] Selected: {selected_model['display']}")
+
+    # Get model key for config storage (use full path as unique key)
+    model_key = selected_model["path"]
+
+    # Check if model has existing configuration
+    model_settings = get_model_config(config, model_key)
+    has_existing = model_key in config.get("models", {})
+
+    # Display current settings for the new model
+    display_settings(model_settings)
+
+    if has_existing:
+        print("This model has existing configuration.")
+    else:
+        print("Using default configuration.")
+
+    return model_key, model_settings
+
+
 def clear_screen():
     """Clear terminal screen."""
     os.system("cls" if os.name == "nt" else "clear")
@@ -455,78 +507,57 @@ def main():
         input("\nPress Enter to exit...")
         return
 
-    print(f"[OK] Found {len(models)} model(s):\n")
-    for i, model in enumerate(models, 1):
-        print(f"  {i}. {model['display']}")
+    print(f"[OK] Found {len(models)} model(s).")
 
     # Select model
-    print()
-    while True:
-        try:
-            choice = input("Select model by number: ").strip()
-            idx = int(choice) - 1
-            if 0 <= idx < len(models):
-                selected_model = models[idx]
-                break
-            else:
-                print(f"Invalid choice. Please enter 1-{len(models)}")
-        except ValueError:
-            print("Invalid input. Please enter a number.")
+    selected_model = select_model(models)
+    model_key, model_settings = apply_model_selection(selected_model, config)
 
-    print(f"\n[OK] Selected: {selected_model['display']}")
-
-    # Get model key for config storage (use full path as unique key)
-    model_key = selected_model["path"]
-
-    # Check if model has existing configuration
-    model_settings = get_model_config(config, model_key)
-    has_existing = model_key in config.get("models", {})
-
-    # Display current settings
-    display_settings(model_settings)
-
-    # Ask whether to use existing or modify
-    if has_existing:
-        print("This model has existing configuration.")
-    else:
-        print("Using default configuration.")
-
-    while True:
+    # Inner loop for settings; outer loop allows returning to model selection
+    launching = False
+    while not launching:
         print("\nWhat would you like to do?")
         print("  1. Use current settings and launch")
         print("  2. Modify settings")
-        print("  3. Exit")
+        print("  3. Change model")
+        print("  4. Exit")
 
-        action = input("\nSelect (1/2/3): ").strip()
+        action = input("\nSelect (1/2/3/4): ").strip()
 
         if action == "1":
-            # Use current settings
-            break
+            # Confirm launch
+            print("\n" + "=" * 60)
+            print("Server Configuration:")
+            print(f"  Host:    {host}")
+            print(f"  Port:    {port}")
+            print(f"  Model:   {selected_model['display']}")
+            print("=" * 60)
+
+            confirm = input("\nLaunch server? (y/n): ").strip().lower()
+            if confirm in ["y", "yes"]:
+                launching = True
+            else:
+                print("Launch cancelled.")
         elif action == "2":
             # Modify settings
             model_settings = edit_settings(model_settings)
             # Save updated settings
             config = save_model_config(config, model_key, model_settings)
             display_settings(model_settings)
-            continue
         elif action == "3":
+            # Return to model selection
+            new_model = select_model(models, allow_cancel=True)
+            if new_model is None:
+                print("Model change cancelled.")
+                continue
+            
+            selected_model = new_model
+            model_key, model_settings = apply_model_selection(selected_model, config)
+        elif action == "4":
             print("\nExiting...")
             return
         else:
             print("Invalid choice. Try again.")
-
-    # Confirm launch
-    print("\n" + "=" * 60)
-    print("Server Configuration:")
-    print(f"  Host:    {host}")
-    print(f"  Port:    {port}")
-    print(f"  Model:   {selected_model['display']}")
-    print("=" * 60)
-
-    confirm = input("\nLaunch server? (y/n): ").strip().lower()
-    if confirm not in ["y", "yes"]:
-        print("Launch cancelled.")
-        return
 
     # Build and launch command
     cmd = build_command(
