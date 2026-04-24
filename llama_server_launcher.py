@@ -39,7 +39,8 @@ DEFAULT_CONFIG = {
         "repeat_penalty": 1.1,
         "presence_penalty": None,
         "thinking": None,
-        "jinja": None
+        "jinja": None,
+        "vision": None
     }
 }
 
@@ -71,6 +72,7 @@ SETTINGS_INFO = [
     ("15", "Presence Penalty", "presence_penalty"),
     ("16", "Thinking", "thinking"),
     ("17", "Jinja", "jinja"),
+    ("18", "Vision", "vision"),
 ]
 
 
@@ -206,6 +208,7 @@ def display_settings(settings: Dict[str, Any]) -> None:
     print(f"  Presence Penalty:    {settings.get('presence_penalty', 'N/A')}")
     print(f"  Thinking:            {settings.get('thinking', 'N/A')}")
     print(f"  Jinja:               {settings.get('jinja', 'N/A')}")
+    print(f"  Vision:              {settings.get('vision', 'N/A')}")
     print("=" * 50 + "\n")
 
 
@@ -247,7 +250,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         print(f"\nCurrent value for {name}: {current}")
 
         # Determine if this setting should use selection menu or free input
-        toggle_settings = ["mmap", "flash_attention", "thinking", "jinja"]
+        toggle_settings = ["mmap", "flash_attention", "thinking", "jinja", "vision"]
         kv_quant_settings = ["k_quant", "v_quant"]
 
         if key in toggle_settings:
@@ -376,6 +379,19 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     jinja = settings.get("jinja")
     if jinja is True:
         cmd.append("--jinja")
+
+    # Vision / mmproj: When enabled, add --mmproj flag pointing to first mmproj*.gguf found in the same directory as the model
+    vision = settings.get("vision")
+    if vision is True:
+        model_dir = os.path.dirname(model_path)
+        # Scan for any mmproj file matching mmproj*.gguf pattern
+        mmproj_files = [f for f in os.listdir(model_dir) 
+                        if f.lower().startswith("mmproj") and f.endswith(".gguf")]
+        if not mmproj_files:
+            print(f"[WARNING] Vision enabled but no mmproj file found in {model_dir}")
+        else:
+            mmproj_path = os.path.join(model_dir, sorted(mmproj_files)[0])
+            cmd.extend(["--mmproj", mmproj_path])
 
     # --- Server Settings ---
     cmd.extend(["--host", host])
