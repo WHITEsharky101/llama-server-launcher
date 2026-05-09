@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
         "cpu_moe": None,
         "threads": 8,
         "batch_size": 512,
+        "parallel": 1,
         "mmap": False,
         "flash_attention": True,
         "k_quant": "turbo3",
@@ -48,7 +49,7 @@ DEFAULT_CONFIG = {
 KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "none"]
 
 # === Model Parameter Settings (for info display) ===
-MODEL_PARAM_SETTINGS = ["context", "gpu_offload", "cpu_moe", "threads", "batch_size", "mmap", "flash_attention", "k_quant", "v_quant"]
+MODEL_PARAM_SETTINGS = ["context", "gpu_offload", "cpu_moe", "threads", "batch_size", "parallel", "mmap", "flash_attention", "k_quant", "v_quant"]
 
 # === Generation Settings ===
 GENERATION_SETTINGS = ["temp", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty", "thinking", "jinja"]
@@ -73,6 +74,20 @@ SETTINGS_INFO = [
     ("16", "Thinking", "thinking"),
     ("17", "Jinja", "jinja"),
     ("18", "Vision", "vision"),
+    ("6", "Parallel", "parallel"),
+    ("7", "mmap", "mmap"),
+    ("8", "Flash Attention", "flash_attention"),
+    ("9", "K Quant", "k_quant"),
+    ("10", "V Quant", "v_quant"),
+    ("11", "Temp", "temp"),
+    ("12", "Top K", "top_k"),
+    ("13", "Top P", "top_p"),
+    ("14", "Min P", "min_p"),
+    ("15", "Repeat Penalty", "repeat_penalty"),
+    ("16", "Presence Penalty", "presence_penalty"),
+    ("17", "Thinking", "thinking"),
+    ("18", "Jinja", "jinja"),
+    ("19", "Vision", "vision"),
 ]
 
 
@@ -190,11 +205,12 @@ def display_settings(settings: Dict[str, Any]) -> None:
     print("Model Settings:")
     print("=" * 50)
     print("\n--- Model Parameters ---")
-    print(f"  Context:              {settings.get('context', 'N/A')}")
-    print(f"  GPU Offload:          {settings.get('gpu_offload', 'N/A')}")
+    print(f"  Context:             {settings.get('context', 'N/A')}")
+    print(f"  GPU Offload:         {settings.get('gpu_offload', 'N/A')}")
     print(f"  CPU MOE:             {settings.get('cpu_moe', 'N/A')}")
     print(f"  Threads:             {settings.get('threads', 'N/A')}")
     print(f"  Batch Size:          {settings.get('batch_size', 'N/A')}")
+    print(f"  Parallel:            {settings.get('parallel', 'N/A')}")
     print(f"  mmap:                {settings.get('mmap', 'N/A')}")
     print(f"  Flash Attention:     {settings.get('flash_attention', 'N/A')}")
     print(f"  K Quant:             {settings.get('k_quant', 'N/A')}")
@@ -327,6 +343,7 @@ SIMPLE_PARAM_MAP = [
     ("cpu_moe", "--n-cpu-moe"),
     ("threads", "-t"),
     ("batch_size", "-b"),
+    ("parallel", "-np"),
     ("temp", "--temp"),
     ("k_quant", "-ctk"),
     ("v_quant", "-ctv"),
