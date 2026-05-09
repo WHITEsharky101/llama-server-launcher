@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
         "repeat_penalty": 1.1,
         "presence_penalty": None,
         "thinking": None,
+        "p_thinking": None,
         "jinja": None,
         "vision": None
     }
@@ -52,7 +53,7 @@ KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "none"]
 MODEL_PARAM_SETTINGS = ["context", "gpu_offload", "cpu_moe", "threads", "batch_size", "parallel", "mmap", "flash_attention", "k_quant", "v_quant"]
 
 # === Generation Settings ===
-GENERATION_SETTINGS = ["temp", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty", "thinking", "jinja"]
+GENERATION_SETTINGS = ["temp", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty", "thinking", "p_thinking", "jinja"]
 
 # === Settings Menu Definition (shared between display_settings_menu and edit_settings) ===
 SETTINGS_INFO = [
@@ -61,19 +62,6 @@ SETTINGS_INFO = [
     ("3", "CPU MOE", "cpu_moe"),
     ("4", "Threads", "threads"),
     ("5", "Batch Size", "batch_size"),
-    ("6", "mmap", "mmap"),
-    ("7", "Flash Attention", "flash_attention"),
-    ("8", "K Quant", "k_quant"),
-    ("9", "V Quant", "v_quant"),
-    ("10", "Temp", "temp"),
-    ("11", "Top K", "top_k"),
-    ("12", "Top P", "top_p"),
-    ("13", "Min P", "min_p"),
-    ("14", "Repeat Penalty", "repeat_penalty"),
-    ("15", "Presence Penalty", "presence_penalty"),
-    ("16", "Thinking", "thinking"),
-    ("17", "Jinja", "jinja"),
-    ("18", "Vision", "vision"),
     ("6", "Parallel", "parallel"),
     ("7", "mmap", "mmap"),
     ("8", "Flash Attention", "flash_attention"),
@@ -86,8 +74,9 @@ SETTINGS_INFO = [
     ("15", "Repeat Penalty", "repeat_penalty"),
     ("16", "Presence Penalty", "presence_penalty"),
     ("17", "Thinking", "thinking"),
-    ("18", "Jinja", "jinja"),
-    ("19", "Vision", "vision"),
+    ("18", "Preserve Think", "p_thinking"),
+    ("19", "Jinja", "jinja"),
+    ("20", "Vision", "vision"),
 ]
 
 
@@ -223,6 +212,7 @@ def display_settings(settings: Dict[str, Any]) -> None:
     print(f"  Repeat Penalty:      {settings.get('repeat_penalty', 'N/A')}")
     print(f"  Presence Penalty:    {settings.get('presence_penalty', 'N/A')}")
     print(f"  Thinking:            {settings.get('thinking', 'N/A')}")
+    print(f"  Preserve Think:      {settings.get('p_thinking', 'N/A')}")
     print(f"  Jinja:               {settings.get('jinja', 'N/A')}")
     print(f"  Vision:              {settings.get('vision', 'N/A')}")
     print("=" * 50 + "\n")
@@ -266,7 +256,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         print(f"\nCurrent value for {name}: {current}")
 
         # Determine if this setting should use selection menu or free input
-        toggle_settings = ["mmap", "flash_attention", "thinking", "jinja", "vision"]
+        toggle_settings = ["mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision"]
         kv_quant_settings = ["k_quant", "v_quant"]
 
         if key in toggle_settings:
@@ -390,7 +380,14 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     if thinking is True:
         cmd.extend(["--chat-template-kwargs", '{"enable_thinking":true}'])
     elif thinking is False:
-        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])
+        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])    
+        
+    # PreserveThinking (--chat-template-kwargs): True/False for enable_p_thinking
+    p_thinking = settings.get("p_thinking")
+    if p_thinking is True:
+        cmd.extend(["--chat-template-kwargs", '{"preserve_thinking": true}'])
+    elif p_thinking is False:
+        cmd.extend(["--chat-template-kwargs", '{"preserve_thinking": false}'])
 
     # Jinja (--jinja): True means enable
     jinja = settings.get("jinja")
