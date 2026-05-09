@@ -410,6 +410,11 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     # --- Server Settings ---
     cmd.extend(["--host", host])
     cmd.extend(["--port", str(port)])
+    
+    cmd.extend(["--no-webui"])
+    cmd.extend(["--n-predict", str(-1)])
+    cmd.extend(["--no-slots"])
+    cmd.extend(["--swa-full"])
 
     if api_key:
         cmd.extend(["--api-key", api_key])
