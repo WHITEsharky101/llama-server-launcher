@@ -265,7 +265,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             print("  1. on")
             print("  2. off")
             print("  3. none")
-            
+
             while True:
                 choice = input("> ").strip()
                 if choice in ("", "3"):
@@ -285,7 +285,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             print(f"Select value for {name}:")
             for i, opt in enumerate(KV_QUANT_OPTIONS, 1):
                 print(f"  {i}. {opt}")
-            
+
             while True:
                 choice = input("> ").strip()
                 if choice == "" or choice == "6":
@@ -380,8 +380,8 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     if thinking is True:
         cmd.extend(["--chat-template-kwargs", '{"enable_thinking":true}'])
     elif thinking is False:
-        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])    
-        
+        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])
+
     # PreserveThinking (--chat-template-kwargs): True/False for enable_p_thinking
     p_thinking = settings.get("p_thinking")
     if p_thinking is True:
@@ -399,7 +399,7 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     if vision is True:
         model_dir = os.path.dirname(model_path)
         # Scan for any mmproj file matching mmproj*.gguf pattern
-        mmproj_files = [f for f in os.listdir(model_dir) 
+        mmproj_files = [f for f in os.listdir(model_dir)
                         if f.lower().startswith("mmproj") and f.endswith(".gguf")]
         if not mmproj_files:
             print(f"[WARNING] Vision enabled but no mmproj file found in {model_dir}")
@@ -410,7 +410,7 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     # --- Server Settings ---
     cmd.extend(["--host", host])
     cmd.extend(["--port", str(port)])
-    
+
     cmd.extend(["--no-webui"])
     cmd.extend(["--n-predict", str(-1)])
     cmd.extend(["--no-slots"])
@@ -422,28 +422,73 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     return cmd
 
 
-def launch_server(cmd: List[str]) -> None:
-    """Launch the llama server process."""
+def _listen_for_stop_key(stop_flag: list, stop_event: threading.Event) -> None:
+    """Background thread that listens for 'q' key press and sets the stop flag."""
+    while not stop_event.is_set():
+        if msvcrt.kbhit():
+            char = msvcrt.getch().decode('utf-8', errors='ignore').lower()
+            if char == 'q':
+                stop_flag[0] = True
+                return
+        time.sleep(0.05)
+
+
+def launch_server(cmd: List[str]) -> bool:
+    """Launch the llama server process.
+
+    Returns True if user pressed 'q' to stop, False otherwise (e.g., Ctrl+C or natural exit).
+    """
     if not cmd:
         print("[ERROR] No command to launch!")
-        return
+        return False
 
     print("\n" + "=" * 60)
     print("Launching Llama Server...")
     print("=" * 60)
     print(f"Command: {' '.join(cmd)}")
     print("=" * 60)
-    print("\nPress Ctrl+C to stop the server.\n")
+    print("\nPress 'q' to stop the server and return to menu.")
+    print("Press Ctrl+C to forcefully terminate.\n")
 
     process = None
+    user_stopped_via_q = False
+
     try:
+        # Use a mutable list as shared flag between threads
+        stop_flag = [False]  # index is set by keyboard listener thread
+
+        # Start keyboard listener daemon thread
+        stop_event = threading.Event()
+        kb_thread = threading.Thread(target=_listen_for_stop_key, args=(stop_flag, stop_event), daemon=True)
+        kb_thread.start()
+
+        # Start the server process
         process = subprocess.Popen(cmd)
-        process.wait()  # Block until process exits
-        if process.returncode is not None and process.returncode != 0:
-            print(f"\n[INFO] Server process ended with code: {process.returncode}")
+
+        # Wait for either the process to exit or user to press 'q'
+        while True:
+            if stop_flag[0]:
+                print("\n\n[INFO] User requested stop (pressed 'q'). Stopping server...")
+                try:
+                    process.terminate()
+                    process.wait(timeout=5)
+                except Exception:
+                    process.kill()
+                user_stopped_via_q = True
+                break
+
+            # Check if process is still running
+            retcode = process.poll()
+            if retcode is not None:
+                break
+
+            time.sleep(0.05)  # Avoid busy-waiting too much
+
+        stop_event.set()
+        kb_thread.join(timeout=1)
+
     except KeyboardInterrupt:
-        print("\n[INFO] Server stopped by user.")
-        # Gracefully terminate the server process
+        print("\n[INFO] Server stopped by user (Ctrl+C).")
         if process is not None:
             try:
                 process.terminate()
@@ -455,10 +500,12 @@ def launch_server(cmd: List[str]) -> None:
     except Exception as e:
         print(f"\n[ERROR] Failed to launch server: {e}")
 
+    return user_stopped_via_q
+
 
 def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_model: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
     """Display model list and prompt user to select one.
-    
+
     If last_model is provided and the user enters an empty string, returns last_model.
     Returns the selected model dict, or None if cancelled (when allow_cancel=True).
     """
@@ -471,7 +518,7 @@ def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_
         parts.append("0 to cancel")
     if last_model is not None:
         parts.append(f"Enter for {last_model['display']}")
-    
+
     if parts:
         prompt = f"Select model by number (or {', '.join(parts)}): "
     else:
@@ -479,14 +526,14 @@ def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_
 
     while True:
         choice = input(prompt).strip()
-        
+
         # Handle empty input -> use last model
         if choice == "" and last_model is not None:
             return last_model
-        
+
         if allow_cancel and choice == "0":
             return None
-        
+
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(models):
@@ -573,9 +620,7 @@ def main():
     selected_model = select_model(models, allow_cancel=False, last_model=last_model)
     model_key, model_settings = apply_model_selection(selected_model, config)
 
-    # Inner loop for settings; outer loop allows returning to model selection
-    launching = False
-    while not launching:
+    while True:
         print("\nWhat would you like to do?")
         print("  1. Use current settings and launch")
         print("  2. Modify settings")
@@ -592,7 +637,25 @@ def main():
             print(f"  Port:    {port}")
             print(f"  Model:   {selected_model['display']}")
             print("=" * 60)
-            launching = True
+
+            # Save last used model to config before launching
+            config["last_model"] = model_key
+            save_config(config)
+
+            # Build and launch command
+            cmd = build_command(
+                model_path=get_model_path(selected_model["path"]),
+                settings=model_settings,
+                host=host,
+                port=port,
+                api_key=api_key
+            )
+
+            if cmd:
+                launch_server(cmd)
+
+            # After server stops (via 'q', Ctrl+C, or natural exit), return to menu
+            print("\n[OK] Server stopped.")
         elif action == "2":
             # Modify settings
             model_settings = edit_settings(model_settings)
@@ -605,7 +668,7 @@ def main():
             if new_model is None:
                 print("Model change cancelled.")
                 continue
-            
+
             selected_model = new_model
             model_key, model_settings = apply_model_selection(selected_model, config)
         elif action == "4":
@@ -613,22 +676,6 @@ def main():
             return
         else:
             print("Invalid choice. Try again.")
-
-    # Save last used model to config before launching
-    config["last_model"] = model_key
-    save_config(config)
-
-    # Build and launch command
-    cmd = build_command(
-        model_path=get_model_path(selected_model["path"]),
-        settings=model_settings,
-        host=host,
-        port=port,
-        api_key=api_key
-    )
-
-    if cmd:
-        launch_server(cmd)
 
 
 if __name__ == "__main__":
