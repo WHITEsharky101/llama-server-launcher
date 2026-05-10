@@ -9,8 +9,11 @@ import os
 import json
 import copy
 import subprocess
+import threading
+import msvcrt
+import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Tuple, Optional, Dict, Any, List
 
 # === Configuration Paths ===
 MODELS_DIR = r"C:\Users\WHITEsharky\.lmstudio\models"
@@ -48,12 +51,6 @@ DEFAULT_CONFIG = {
 
 # === KV Cache Quantization Options ===
 KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "none"]
-
-# === Model Parameter Settings (for info display) ===
-MODEL_PARAM_SETTINGS = ["context", "gpu_offload", "cpu_moe", "threads", "batch_size", "parallel", "mmap", "flash_attention", "k_quant", "v_quant"]
-
-# === Generation Settings ===
-GENERATION_SETTINGS = ["temp", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty", "thinking", "p_thinking", "jinja"]
 
 # === Settings Menu Definition (shared between display_settings_menu and edit_settings) ===
 SETTINGS_INFO = [
@@ -375,19 +372,16 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     if fa is True:
         cmd.extend(["--flash-attn", "on"])
 
-    # Thinking (--chat-template-kwargs): True/False for enable_thinking
-    thinking = settings.get("thinking")
-    if thinking is True:
-        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":true}'])
-    elif thinking is False:
-        cmd.extend(["--chat-template-kwargs", '{"enable_thinking":false}'])
-
-    # PreserveThinking (--chat-template-kwargs): True/False for enable_p_thinking
-    p_thinking = settings.get("p_thinking")
-    if p_thinking is True:
-        cmd.extend(["--chat-template-kwargs", '{"preserve_thinking": true}'])
-    elif p_thinking is False:
-        cmd.extend(["--chat-template-kwargs", '{"preserve_thinking": false}'])
+    # Chat Template Kwargs: Merge thinking + preserve_thinking into a single --chat-template-kwargs argument
+    chat_kwargs = {}
+    thinking_val = settings.get("thinking")
+    if thinking_val is not None and isinstance(thinking_val, bool):
+        chat_kwargs["enable_thinking"] = thinking_val
+    p_thinking_val = settings.get("p_thinking")
+    if p_thinking_val is not None and isinstance(p_thinking_val, bool):
+        chat_kwargs["preserve_thinking"] = p_thinking_val
+    if chat_kwargs:
+        cmd.extend(["--chat-template-kwargs", json.dumps(chat_kwargs)])
 
     # Jinja (--jinja): True means enable
     jinja = settings.get("jinja")
@@ -493,8 +487,9 @@ def launch_server(cmd: List[str]) -> bool:
             try:
                 process.terminate()
                 process.wait(timeout=5)
-            except Exception:
+            except subprocess.TimeoutExpired:
                 process.kill()
+                process.wait()
     except FileNotFoundError:
         print(f"\n[ERROR] Executable not found: {cmd[0]}")
     except Exception as e:
@@ -546,7 +541,7 @@ def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_
                 print("Invalid input. Please enter a number.")
 
 
-def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]) -> tuple:
+def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """Apply model selection: load config, display settings.
 
     Returns (model_key, model_settings) tuple.
