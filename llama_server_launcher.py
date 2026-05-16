@@ -45,7 +45,8 @@ DEFAULT_CONFIG = {
         "thinking": None,
         "p_thinking": None,
         "jinja": None,
-        "vision": None
+        "vision": None,
+        "tensor_split": None
     }
 }
 
@@ -74,6 +75,7 @@ SETTINGS_INFO = [
     ("18", "Preserve Think", "p_thinking"),
     ("19", "Jinja", "jinja"),
     ("20", "Vision", "vision"),
+    ("21", "GPU Tensor Split", "tensor_split"),
 ]
 
 
@@ -212,6 +214,12 @@ def display_settings(settings: Dict[str, Any]) -> None:
     print(f"  Preserve Think:      {settings.get('p_thinking', 'N/A')}")
     print(f"  Jinja:               {settings.get('jinja', 'N/A')}")
     print(f"  Vision:              {settings.get('vision', 'N/A')}")
+    print("\n--- Multi-GPU Settings ---")
+    ts = settings.get("tensor_split")
+    if ts is not None and isinstance(ts, list):
+        print(f"  GPU Tensor Split:    {','.join(_format_number(v) for v in ts)}%")
+    else:
+        print(f"  GPU Tensor Split:    {'disabled'}")
     print("=" * 50 + "\n")
 
 
@@ -299,6 +307,29 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
                 except ValueError:
                     print("Invalid input.")
 
+        elif key == "tensor_split":
+            # GPU Tensor Split: single percentage for first GPU, second is 100-x.
+            # Precision up to tenths (one decimal place). Empty input disables the flag.
+            print("Enter GPU load percentage for the first GPU (the second gets the remainder).")
+            print("Example: '60' means GPU1=60%, GPU2=40%. Precision to 0.1.")
+            print("Leave empty to disable tensor-split.")
+            while True:
+                new_value = input("> ").strip()
+                if new_value == "" or new_value.lower() in ("none", "null"):
+                    settings[key] = None
+                    break
+                try:
+                    val = float(new_value)
+                    if val < 0 or val > 100:
+                        print("Percentage must be between 0 and 100.")
+                        continue
+                    gpu1 = round(val, 1)
+                    gpu2 = round(100.0 - gpu1, 1)
+                    settings[key] = [gpu1, gpu2]
+                    break
+                except ValueError:
+                    print("Invalid input. Enter a number (e.g. '60' or '75.5').")
+
         else:
             # Free text input for numeric/text settings
             print("Enter new value (or 'none' to skip this parameter):")
@@ -340,6 +371,11 @@ SIMPLE_PARAM_MAP = [
     ("repeat_penalty", "--repeat-penalty"),
     ("presence_penalty", "--presence-penalty"),
 ]
+
+
+def _format_number(v: float) -> str:
+    """Format float as int string when whole, otherwise keep decimals."""
+    return str(int(v)) if v == int(v) else str(v)
 
 
 def _add_simple_param(cmd: List[str], flag: str, value: Any) -> None:
@@ -407,6 +443,15 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
 
     cmd.extend(["--no-webui"])
     cmd.extend(["--n-predict", str(-1)])
+    cmd.extend(["-mg", str(0)])
+
+    # Tensor Split: multi-GPU layer distribution (--tensor-split)
+    tensor_split = settings.get("tensor_split")
+    if tensor_split is not None and isinstance(tensor_split, list) and len(tensor_split) >= 2:
+        # Format each value: use int representation when .0 (e.g. 60 instead of 60.0), otherwise keep decimal
+        split_str = ",".join(_format_number(v) for v in tensor_split)
+        cmd.extend(["--tensor-split", split_str])
+
     cmd.extend(["--no-slots"])
     cmd.extend(["--swa-full"])
 
