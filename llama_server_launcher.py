@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
         "gpu_offload": 99,
         "cpu_moe": None,
         "threads": 8,
-        "batch_size": 512,
+        "batch_size": 1024,
         "parallel": 1,
         "mmap": False,
         "flash_attention": True,
@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
         "top_p": 0.95,
         "min_p": 0.05,
         "repeat_penalty": 1.1,
-        "presence_penalty": None,
+        "presence_penalty": 1.5,
         "thinking": None,
         "p_thinking": None,
         "jinja": None,
@@ -538,7 +538,7 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
         split_str = ",".join(_format_number(v) for v in tensor_split)
         cmd.extend(["--tensor-split", split_str])
 
-    cmd.extend(["--no-slots"])
+    #cmd.extend(["--no-slots"])
     cmd.extend(["--swa-full"])
 
     if api_key:
@@ -682,9 +682,6 @@ def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]
     # Get model key for config storage (use full path as unique key)
     model_key = selected_model["path"]
 
-    # Check if model has existing configuration
-    model_settings = get_model_config(config, model_key)
-    has_existing = model_key in config.get("models", {})
     # Check if model has existing configuration for this preset (including Coder fallback for Commit)
     base_settings = get_model_config(config, model_key, preset_slug)
     has_existing = has_preset_config(config, model_key, preset_slug)
