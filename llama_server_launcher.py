@@ -39,6 +39,8 @@ DEFAULT_CONFIG = {
         "flash_attention": True,
         "k_quant": "turbo3",
         "v_quant": "turbo3",
+        "mtp": None,
+        "draft_n_max": None,
         "temp": 1,
         "top_k": 20,
         "top_p": 0.95,
@@ -99,17 +101,19 @@ SETTINGS_INFO = [
     ("8", "Flash Attention", "flash_attention"),
     ("9", "K Quant", "k_quant"),
     ("10", "V Quant", "v_quant"),
-    ("11", "Temp", "temp"),
-    ("12", "Top K", "top_k"),
-    ("13", "Top P", "top_p"),
-    ("14", "Min P", "min_p"),
-    ("15", "Repeat Penalty", "repeat_penalty"),
-    ("16", "Presence Penalty", "presence_penalty"),
-    ("17", "Thinking", "thinking"),
-    ("18", "Preserve Think", "p_thinking"),
-    ("19", "Jinja", "jinja"),
-    ("20", "Vision", "vision"),
-    ("21", "GPU Tensor Split", "tensor_split"),
+    ("11", "MTP", "mtp"),
+    ("12", "Draft N Max", "draft_n_max"),
+    ("13", "Temp", "temp"),
+    ("14", "Top K", "top_k"),
+    ("15", "Top P", "top_p"),
+    ("16", "Min P", "min_p"),
+    ("17", "Repeat Penalty", "repeat_penalty"),
+    ("18", "Presence Penalty", "presence_penalty"),
+    ("19", "Thinking", "thinking"),
+    ("20", "Preserve Think", "p_thinking"),
+    ("21", "Jinja", "jinja"),
+    ("22", "Vision", "vision"),
+    ("23", "GPU Tensor Split", "tensor_split"),
 ]
 
 
@@ -289,6 +293,11 @@ def display_settings(settings: Dict[str, Any]) -> None:
     print(f"  Flash Attention:     {settings.get('flash_attention', 'N/A')}")
     print(f"  K Quant:             {settings.get('k_quant', 'N/A')}")
     print(f"  V Quant:             {settings.get('v_quant', 'N/A')}")
+    mtp_val = settings.get("mtp")
+    draft_val = settings.get("draft_n_max")
+    mtp_display = "on" if mtp_val is True else ("off" if mtp_val is False else "none")
+    print(f"  MTP:                 {mtp_display}")
+    print(f"  Draft N Max:         {draft_val if mtp_val is True else '(ignored)'}")
     print("\n--- Generation Settings ---")
     print(f"  Temp:                {settings.get('temp', 'N/A')}")
     print(f"  Top K:               {settings.get('top_k', 'N/A')}")
@@ -347,7 +356,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         print(f"\nCurrent value for {name}: {current}")
 
         # Determine if this setting should use selection menu or free input
-        toggle_settings = ["mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision"]
+        toggle_settings = ["mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision", "mtp"]
         kv_quant_settings = ["k_quant", "v_quant"]
 
         if key in toggle_settings:
@@ -416,6 +425,27 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
                 except ValueError:
                     print("Invalid input. Enter a number (e.g. '60' or '75.5').")
 
+        elif key == "draft_n_max":
+            # Draft N Max: positive integer, ignored when MTP is not enabled
+            mtp_val = settings.get("mtp")
+            if mtp_val is not True:
+                print("[INFO] MTP is not enabled (on). Draft N Max will be ignored at launch.")
+                print("Enable MTP first if you want this setting to take effect.")
+            print("Enter a positive integer value for max draft tokens (or 'none' to clear):")
+            while True:
+                new_value = input("> ").strip().lower()
+                if new_value == "" or new_value in ("none", "null"):
+                    settings[key] = None
+                    break
+                try:
+                    val = int(new_value)
+                    if val <= 0:
+                        print("Value must be a positive integer (> 0).")
+                        continue
+                    settings[key] = val
+                    break
+                except ValueError:
+                    print("Invalid input. Enter a positive integer.")
         else:
             # Free text input for numeric/text settings
             print("Enter new value (or 'none' to skip this parameter):")
@@ -530,6 +560,14 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     cmd.extend(["--no-webui"])
     cmd.extend(["--n-predict", str(-1)])
     cmd.extend(["-mg", str(0)])
+
+    # MTP (Multi-Token Prediction): --spec-type draft-mtp when enabled
+    mtp = settings.get("mtp")
+    if mtp is True:
+        cmd.extend(["--spec-type", "draft-mtp"])
+        draft_n_max = settings.get("draft_n_max")
+        if draft_n_max is not None and isinstance(draft_n_max, int) and draft_n_max > 0:
+            cmd.extend(["--spec-draft-n-max", str(draft_n_max)])
 
     # Tensor Split: multi-GPU layer distribution (--tensor-split)
     tensor_split = settings.get("tensor_split")
