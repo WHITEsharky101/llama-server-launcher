@@ -24,7 +24,10 @@ CONFIG_FILE = Path(__file__).parent / "llama_server_config.json"
 DEFAULT_CONFIG = {
     "host": "192.168.1.177",
     "port": 5056,
-    "api_key": "ek-cvpxgU0aMOLzFhbwOs3XcVgH8jyWpHqdX7cRRIlbtzwKtF7LvV",
+    "api_keys": {
+        "rp": "ek-cvpxgU0aMOLzFhbwOs3XcVgH8jyWpHqdX7cRRIlbtzwKtF7LvR",
+        "coder": "ek-cvpxgU0aMOLzFhbwOs3XcVgH8jyWpHqdX7cRRIlbtzwKtF7LvV"
+    },
     "defaults": {
         "context": 32768,
         "gpu_offload": 99,
@@ -52,6 +55,37 @@ DEFAULT_CONFIG = {
 
 # === KV Cache Quantization Options ===
 KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "none"]
+
+# === Preset Definitions ===
+PRESETS = {
+    "rp": {"display": "RP"},
+    "coder": {"display": "Coder"},
+    "commit": {"display": "Commit"}
+}
+
+
+def preset_api_key(config: Dict[str, Any], preset_slug: str) -> str:
+    """Return the API key for a given preset. RP uses 'rp' key; Coder and Commit use 'coder' key."""
+    api_keys = config.get("api_keys", {})
+    if preset_slug == "rp":
+        return api_keys.get("rp", "")
+    else:
+        # coder, commit both use the coder key
+        return api_keys.get("coder", "")
+
+
+def apply_preset_overrides(preset_slug: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply preset-specific overrides to settings.
+
+    Commit forces thinking=False and p_thinking=False regardless of saved values.
+    Returns a new dict with overrides applied (does not mutate the original).
+    """
+    result = copy.deepcopy(settings)
+    if preset_slug == "commit":
+        result["thinking"] = False
+        result["p_thinking"] = False
+    return result
+
 
 # === Settings Menu Definition (shared between display_settings_menu and edit_settings) ===
 SETTINGS_INFO = [
@@ -168,21 +202,73 @@ def get_llama_server_path() -> Optional[str]:
     return None
 
 
-def get_model_config(config: Dict[str, Any], model_key: str) -> Dict[str, Any]:
-    """Get model-specific config, falling back to defaults."""
+def get_model_config(config: Dict[str, Any], model_key: str, preset_slug: str) -> Dict[str, Any]:
+    """Get model-specific config for a given preset, falling back to defaults.
+
+    Commit falls back to Coder settings if no commit-specific config exists.
+    """
     models = config.get("models", {})
-    if model_key in models:
-        model_defaults = config.get("defaults", DEFAULT_CONFIG["defaults"]).copy()
-        model_defaults.update(models[model_key])
-        return model_defaults
-    return config.get("defaults", DEFAULT_CONFIG["defaults"]).copy()
+    default_defaults = config.get("defaults", copy.deepcopy(DEFAULT_CONFIG["defaults"]))
+    if model_key in models and isinstance(models[model_key], dict):
+        preset_settings = models[model_key].get(preset_slug)
+        if preset_settings is not None:
+            merged = default_defaults.copy()
+            merged.update(preset_settings)
+            return merged
+        # Commit falls back to Coder settings when no commit-specific config exists
+        if preset_slug == "commit":
+            coder_settings = models[model_key].get("coder")
+            if coder_settings is not None:
+                merged = default_defaults.copy()
+                merged.update(coder_settings)
+                return merged
+    return default_defaults.copy()
 
 
-def save_model_config(config: Dict[str, Any], model_key: str, model_settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Save model-specific configuration."""
+def has_preset_config(config: Dict[str, Any], model_key: str, preset_slug: str) -> bool:
+    """Check whether a model+preset combo has explicit saved config.
+
+    For 'commit', also returns True if 'coder' settings exist (since commit falls back to coder).
+    """
+    models = config.get("models", {})
+    if not isinstance(models.get(model_key), dict):
+        return False
+    direct = preset_slug in models[model_key]
+    fallback = preset_slug == "commit" and "coder" in models[model_key]
+    return direct or fallback
+
+
+def best_preset_for_model(config: Dict[str, Any], model_key: str, preferred: str) -> str:
+    """Return the most appropriate preset slug for a given model.
+
+    Priority order:
+      1. The explicitly saved 'last_preset' (preferred), if it has config for this model.
+      2. Any preset that has explicit config for this model (rp > coder > commit).
+      3. Fallback to the preferred default ('rp').
+    """
+    models = config.get("models", {})
+    stored_presets = models[model_key] if isinstance(models.get(model_key), dict) else {}
+
+    # If preferred preset has explicit config, use it
+    if has_preset_config(config, model_key, preferred):
+        return preferred
+
+    # Otherwise pick the first preset (in priority order) that has saved settings for this model
+    fallback_order = ["rp", "coder"]  # commit is excluded here since it mirrors coder
+    for slug in fallback_order:
+        if slug in stored_presets or has_preset_config(config, model_key, slug):
+            return slug
+
+    return preferred
+
+
+def save_model_config(config: Dict[str, Any], model_key: str, preset_slug: str, model_settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Save model-specific configuration for a given preset."""
     if "models" not in config:
         config["models"] = {}
-    config["models"][model_key] = model_settings
+    if model_key not in config["models"]:
+        config["models"][model_key] = {}
+    config["models"][model_key][preset_slug] = model_settings
     save_config(config)
     return config
 
@@ -586,10 +672,10 @@ def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_
                 print("Invalid input. Please enter a number.")
 
 
-def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Apply model selection: load config, display settings.
+def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any], preset_slug: str) -> Tuple[str, Dict[str, Any]]:
+    """Apply model selection for a given preset: load config, display settings.
 
-    Returns (model_key, model_settings) tuple.
+    Returns (model_key, model_settings) tuple with preset overrides applied.
     """
     print(f"\n[OK] Selected: {selected_model['display']}")
 
@@ -599,6 +685,12 @@ def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]
     # Check if model has existing configuration
     model_settings = get_model_config(config, model_key)
     has_existing = model_key in config.get("models", {})
+    # Check if model has existing configuration for this preset (including Coder fallback for Commit)
+    base_settings = get_model_config(config, model_key, preset_slug)
+    has_existing = has_preset_config(config, model_key, preset_slug)
+
+    # Apply preset-specific overrides (e.g., Commit forces thinking off)
+    model_settings = apply_preset_overrides(preset_slug, base_settings)
 
     # Display current settings for the new model
     display_settings(model_settings)
@@ -609,6 +701,42 @@ def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]
         print("Using default configuration.")
 
     return model_key, model_settings
+
+
+def switch_preset(config: Dict[str, Any], models: List[Dict[str, str]],
+                  selected_model: Dict[str, str], model_key: str, current_preset: str) -> Tuple[str, Dict[str, Any]]:
+    """Display preset selection menu and return (new_preset_slug, new_settings)."""
+    print("\n--- Select a Preset ---\n")
+
+    available = list(PRESETS.items())  # [("rp", {"display": "RP"}), ...]
+    for i, (slug, info) in enumerate(available, 1):
+        marker = " [current]" if slug == current_preset else ""
+        print(f"  {i}. {info['display']}{marker}")
+
+    prompt = f"\nSelect preset ({', '.join(s for s, _ in available)}): "
+    while True:
+        choice = input(prompt).strip()
+        selected_slug = None
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(available):
+                selected_slug = available[idx][0]
+            else:
+                print(f"Invalid choice. Please enter 1-{len(available)}")
+                continue
+        except ValueError:
+            # Allow typing preset name directly (case-insensitive)
+            lower_choice = choice.lower()
+            for slug, info in available:
+                if slug == lower_choice or info["display"].lower() == lower_choice:
+                    selected_slug = slug
+                    break
+            if selected_slug is None:
+                print("Invalid input. Please enter a number or preset name.")
+                continue
+
+        # If user selects the same preset, confirm and keep it
+        return selected_slug, get_model_config(config, model_key, selected_slug)
 
 
 def clear_screen():
@@ -632,7 +760,12 @@ def main():
     config = load_config()
     host = config.get("host", DEFAULT_CONFIG["host"])
     port = config.get("port", DEFAULT_CONFIG["port"])
-    api_key = config.get("api_key", DEFAULT_CONFIG["api_key"])
+
+    # Ensure api_keys structure exists (migrate legacy single key to new format)
+    if "api_key" in config and "api_keys" not in config:
+        legacy = config.pop("api_key")
+        config["api_keys"] = {"rp": legacy, "coder": legacy}
+        print("[INFO] Migrated API key — please verify Coder preset key.")
 
     # Scan for models
     print("\n[INFO] Scanning for GGUF models...")
@@ -656,36 +789,56 @@ def main():
                 last_model = m
                 break
 
+    # Get last used preset (default to "rp")
+    current_preset = config.get("last_preset", "rp")
+    if current_preset not in PRESETS:
+        current_preset = "rp"
+
     # Select model (empty input uses last model, if available)
     selected_model = select_model(models, allow_cancel=False, last_model=last_model)
-    model_key, model_settings = apply_model_selection(selected_model, config)
+
+    # Determine the best preset for this model: prefer saved 'last_preset' if it has config;
+    # otherwise pick any preset that has explicit settings for this model.
+    current_preset = best_preset_for_model(config, selected_model["path"], current_preset)
+    print(f"\n[INFO] Using preset: {PRESETS[current_preset]['display']}")
+
+    model_key, model_settings = apply_model_selection(selected_model, config, current_preset)
 
     while True:
-        print("\nWhat would you like to do?")
+        preset_display = PRESETS[current_preset]["display"]
+        print(f"\n--- Preset: {preset_display} ---")
+        print("What would you like to do?")
         print("  1. Use current settings and launch")
         print("  2. Modify settings")
-        print("  3. Change model")
-        print("  4. Exit")
+        print("  3. Switch preset (RP / Coder / Commit)")
+        print("  4. Change model")
+        print("  5. Exit")
 
-        action = input("\nSelect (1/2/3/4): ").strip()
+        action = input("\nSelect (1/2/3/4/5): ").strip()
 
         if action == "1":
+            # Apply preset overrides before launching
+            effective_settings = apply_preset_overrides(current_preset, model_settings)
+            api_key = preset_api_key(config, current_preset)
+
             # Show configuration and launch immediately
             print("\n" + "=" * 60)
             print("Server Configuration:")
-            print(f"  Host:    {host}")
-            print(f"  Port:    {port}")
-            print(f"  Model:   {selected_model['display']}")
+            print(f"  Preset:    {preset_display}")
+            print(f"  Host:      {host}")
+            print(f"  Port:      {port}")
+            print(f"  Model:     {selected_model['display']}")
             print("=" * 60)
 
-            # Save last used model to config before launching
+            # Save last used model and preset to config before launching
             config["last_model"] = model_key
+            config["last_preset"] = current_preset
             save_config(config)
 
             # Build and launch command
             cmd = build_command(
                 model_path=get_model_path(selected_model["path"]),
-                settings=model_settings,
+                settings=effective_settings,
                 host=host,
                 port=port,
                 api_key=api_key
@@ -699,10 +852,31 @@ def main():
         elif action == "2":
             # Modify settings
             model_settings = edit_settings(model_settings)
-            # Save updated settings
-            config = save_model_config(config, model_key, model_settings)
-            display_settings(model_settings)
+            # Save updated settings for current preset
+            config = save_model_config(config, model_key, current_preset, model_settings)
+
+            # Re-apply overrides and display
+            effective_settings = apply_preset_overrides(current_preset, model_settings)
+            display_settings(effective_settings)
         elif action == "3":
+            # Switch preset
+            new_preset, base_settings = switch_preset(
+                config, models, selected_model, model_key, current_preset
+            )
+            if new_preset != current_preset:
+                print(f"\n[OK] Preset switched to {PRESETS[new_preset]['display']}")
+
+            # Apply preset overrides and update state
+            effective_settings = apply_preset_overrides(new_preset, base_settings)
+            display_settings(effective_settings)
+
+            # Update current preset reference (don't reassign model_settings directly;
+            # the base settings may differ from what's displayed due to overrides).
+            # We store both: the raw saved settings and compute effective on-the-fly.
+            current_preset = new_preset
+            model_settings = apply_model_selection(selected_model, config, current_preset)[1]
+
+        elif action == "4":
             # Return to model selection (empty input reuses current model)
             new_model = select_model(models, allow_cancel=True, last_model=selected_model)
             if new_model is None:
@@ -710,8 +884,14 @@ def main():
                 continue
 
             selected_model = new_model
-            model_key, model_settings = apply_model_selection(selected_model, config)
-        elif action == "4":
+            _mk = selected_model["path"]
+            # Determine the best preset for this model
+            current_preset = best_preset_for_model(config, _mk, current_preset)
+            if PRESETS[current_preset]["display"]:
+                print(f"\n[INFO] Using preset: {PRESETS[current_preset]['display']}")
+
+            model_key, model_settings = apply_model_selection(selected_model, config, current_preset)
+        elif action == "5":
             print("\nExiting...")
             return
         else:
