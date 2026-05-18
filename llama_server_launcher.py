@@ -267,12 +267,32 @@ def best_preset_for_model(config: Dict[str, Any], model_key: str, preferred: str
 
 
 def save_model_config(config: Dict[str, Any], model_key: str, preset_slug: str, model_settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Save model-specific configuration for a given preset."""
+    """Save model-specific configuration for a given preset.
+
+    For the 'commit' preset, settings are saved under the 'coder' key instead,
+    with thinking and p_thinking preserved from existing coder config (not overwritten).
+    """
+    target_slug = "coder" if preset_slug == "commit" else preset_slug
+    
     if "models" not in config:
         config["models"] = {}
     if model_key not in config["models"]:
         config["models"][model_key] = {}
-    config["models"][model_key][preset_slug] = model_settings
+
+    # When saving for commit, preserve existing thinking/p_thinking from coder config
+    if preset_slug == "commit":
+        settings_to_save = copy.deepcopy(model_settings)
+        settings_to_save.pop("thinking", None)
+        settings_to_save.pop("p_thinking", None)
+        
+        # Merge with existing coder config to keep thinking/p_thinking intact
+        existing_coder = dict(config["models"][model_key].get("coder", {}))
+        existing_coder.update(settings_to_save)
+        config["models"][model_key][target_slug] = existing_coder
+    else:
+        settings_to_save = copy.deepcopy(model_settings)
+        config["models"][model_key][target_slug] = settings_to_save
+    
     save_config(config)
     return config
 
@@ -576,7 +596,7 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
         split_str = ",".join(_format_number(v) for v in tensor_split)
         cmd.extend(["--tensor-split", split_str])
 
-    #cmd.extend(["--no-slots"])
+    cmd.extend(["--no-slots"])
     cmd.extend(["--swa-full"])
 
     if api_key:
@@ -713,7 +733,10 @@ def select_model(models: List[Dict[str, str]], allow_cancel: bool = False, last_
 def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any], preset_slug: str) -> Tuple[str, Dict[str, Any]]:
     """Apply model selection for a given preset: load config, display settings.
 
-    Returns (model_key, model_settings) tuple with preset overrides applied.
+    Returns (model_key, base_settings) tuple WITHOUT overrides applied.
+    Overrides are only used at launch time and for display in the main loop.
+    This ensures that when saving under 'commit', we work with raw coder values
+    rather than commit-forced ones.
     """
     print(f"\n[OK] Selected: {selected_model['display']}")
 
@@ -724,18 +747,16 @@ def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]
     base_settings = get_model_config(config, model_key, preset_slug)
     has_existing = has_preset_config(config, model_key, preset_slug)
 
-    # Apply preset-specific overrides (e.g., Commit forces thinking off)
-    model_settings = apply_preset_overrides(preset_slug, base_settings)
-
-    # Display current settings for the new model
-    display_settings(model_settings)
+    # Display effective settings (with overrides applied on-the-fly for display only)
+    effective = apply_preset_overrides(preset_slug, base_settings)
+    display_settings(effective)
 
     if has_existing:
         print("This model has existing configuration.")
     else:
         print("Using default configuration.")
 
-    return model_key, model_settings
+    return model_key, base_settings
 
 
 def switch_preset(config: Dict[str, Any], models: List[Dict[str, str]],
@@ -894,22 +915,20 @@ def main():
             effective_settings = apply_preset_overrides(current_preset, model_settings)
             display_settings(effective_settings)
         elif action == "3":
-            # Switch preset
+            # Switch preset — use base (raw) settings so edits save correctly.
+            # Overrides are only applied at launch and display time.
             new_preset, base_settings = switch_preset(
                 config, models, selected_model, model_key, current_preset
             )
             if new_preset != current_preset:
                 print(f"\n[OK] Preset switched to {PRESETS[new_preset]['display']}")
 
-            # Apply preset overrides and update state
+            # Display effective settings (overrides applied on-the-fly for display only)
             effective_settings = apply_preset_overrides(new_preset, base_settings)
             display_settings(effective_settings)
 
-            # Update current preset reference (don't reassign model_settings directly;
-            # the base settings may differ from what's displayed due to overrides).
-            # We store both: the raw saved settings and compute effective on-the-fly.
             current_preset = new_preset
-            model_settings = apply_model_selection(selected_model, config, current_preset)[1]
+            model_settings = base_settings
 
         elif action == "4":
             # Return to model selection (empty input reuses current model)
