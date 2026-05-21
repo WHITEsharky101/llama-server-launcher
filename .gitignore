@@ -1,4 +1,7 @@
 /llama_server_config.json
+.env
+.env.local
+.env.*.local
 __pycache__/
 *.pyc
 .idea/

@@ -17,17 +17,59 @@ from typing import Tuple, Optional, Dict, Any, List
 
 # === Configuration Paths ===
 MODELS_DIR = r"C:\Users\WHITEsharky\.lmstudio\models"
-LLAMA_CPP_DIR = r"C:\Users\WHITEsharky\.lmstudio\extensions\backends\turboquant-plus-tqp-v0.1.1-windows-x64-cuda12.4"
+LLAMA_CPP_DIR = r"C:\Users\WHITEsharky\.lmstudio\extensions\backends\llama-cpp-mtp-turboquant"
 CONFIG_FILE = Path(__file__).parent / "llama_server_config.json"
+
+
+def _load_dotenv(env_path: Optional[Path] = None) -> Dict[str, str]:
+    """Parse a .env file (KEY=VALUE per line) and merge into os.environ.
+
+    Lines starting with '#' are treated as comments and skipped.
+    Values may be optionally quoted with single or double quotes.
+    Returns the dict of loaded key-value pairs.
+    If *env_path* is None, defaults to .env in the script's directory.
+    """
+    if env_path is None:
+        env_path = Path(__file__).parent / ".env"
+
+    if not env_path.is_file():
+        return {}
+
+    loaded: Dict[str, str] = {}
+    with open(env_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            os.environ.setdefault(key, value)  # do not override existing env vars
+            loaded[key] = value
+
+    return loaded
+
+
+# Load .env before any configuration is read (side-effect: populates os.environ).
+_load_dotenv()
+
+
+def _resolve_api_keys(config: Dict[str, Any]) -> None:
+    """Populate config['api_keys'] from environment variables if not already set.
+
+    Looks for API_KEY_<slug> in os.environ and fills any missing entries so that
+    users can keep real secrets out of version-controlled files entirely."""
+    api_keys = config.setdefault("api_keys", {})
+    for slug, env_var in (("rp", "API_KEY_rp"), ("coder", "API_KEY_coder")):
+        if not api_keys.get(slug) and (env_value := os.environ.get(env_var)):
+            api_keys[slug] = env_value
+
 
 # === Default Configuration ===
 DEFAULT_CONFIG = {
     "host": "192.168.1.177",
     "port": 5056,
-    "api_keys": {
-        "rp": "ek-cvpxgU0aMOLzFhbwOs3XcVgH8jyWpHqdX7cRRIlbtzwKtF7LvR",
-        "coder": "ek-cvpxgU0aMOLzFhbwOs3XcVgH8jyWpHqdX7cRRIlbtzwKtF7LvV"
-    },
+    "api_keys": {},   # Populated from .env (API_KEY_rp / API_KEY_coder) or saved config
     "defaults": {
         "context": 32768,
         "gpu_offload": 99,
@@ -55,6 +97,7 @@ DEFAULT_CONFIG = {
     }
 }
 
+
 # === KV Cache Quantization Options ===
 KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "none"]
 
@@ -65,15 +108,19 @@ PRESETS = {
     "commit": {"display": "Commit"}
 }
 
+# Maps each preset slug to its corresponding API key field name.
+_PRESET_API_KEY_MAP = {
+    "rp": "rp",
+    "coder": "coder",
+    "commit": "coder",  # commit shares the coder key
+}
+
 
 def preset_api_key(config: Dict[str, Any], preset_slug: str) -> str:
     """Return the API key for a given preset. RP uses 'rp' key; Coder and Commit use 'coder' key."""
     api_keys = config.get("api_keys", {})
-    if preset_slug == "rp":
-        return api_keys.get("rp", "")
-    else:
-        # coder, commit both use the coder key
-        return api_keys.get("coder", "")
+    key_field = _PRESET_API_KEY_MAP.get(preset_slug, "coder")
+    return api_keys.get(key_field, "")
 
 
 def apply_preset_overrides(preset_slug: str, settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -90,51 +137,71 @@ def apply_preset_overrides(preset_slug: str, settings: Dict[str, Any]) -> Dict[s
 
 
 # === Settings Menu Definition (shared between display_settings_menu and edit_settings) ===
+# Each entry: (display_number, config_key, human_readable_name)
 SETTINGS_INFO = [
-    ("1", "Context", "context"),
-    ("2", "GPU Offload", "gpu_offload"),
-    ("3", "CPU MOE", "cpu_moe"),
-    ("4", "Threads", "threads"),
-    ("5", "Batch Size", "batch_size"),
-    ("6", "Parallel", "parallel"),
+    ("1", "context", "Context"),
+    ("2", "gpu_offload", "GPU Offload"),
+    ("3", "cpu_moe", "CPU MOE"),
+    ("4", "threads", "Threads"),
+    ("5", "batch_size", "Batch Size"),
+    ("6", "parallel", "Parallel"),
     ("7", "mmap", "mmap"),
-    ("8", "Flash Attention", "flash_attention"),
-    ("9", "K Quant", "k_quant"),
-    ("10", "V Quant", "v_quant"),
-    ("11", "MTP", "mtp"),
-    ("12", "Draft N Max", "draft_n_max"),
-    ("13", "Temp", "temp"),
-    ("14", "Top K", "top_k"),
-    ("15", "Top P", "top_p"),
-    ("16", "Min P", "min_p"),
-    ("17", "Repeat Penalty", "repeat_penalty"),
-    ("18", "Presence Penalty", "presence_penalty"),
-    ("19", "Thinking", "thinking"),
-    ("20", "Preserve Think", "p_thinking"),
-    ("21", "Jinja", "jinja"),
-    ("22", "Vision", "vision"),
-    ("23", "GPU Tensor Split", "tensor_split"),
+    ("8", "flash_attention", "Flash Attention"),
+    ("9", "k_quant", "K Quant"),
+    ("10", "v_quant", "V Quant"),
+    ("11", "mtp", "MTP"),
+    ("12", "draft_n_max", "Draft N Max"),
+    ("13", "temp", "Temp"),
+    ("14", "top_k", "Top K"),
+    ("15", "top_p", "Top P"),
+    ("16", "min_p", "Min P"),
+    ("17", "repeat_penalty", "Repeat Penalty"),
+    ("18", "presence_penalty", "Presence Penalty"),
+    ("19", "thinking", "Thinking"),
+    ("20", "p_thinking", "Preserve Think"),
+    ("21", "jinja", "Jinja"),
+    ("22", "vision", "Vision"),
+    ("23", "tensor_split", "GPU Tensor Split"),
 ]
+
+# Build a lookup: numeric choice → (config_key, display_name) for O(1) selection
+_SETTINGS_LOOKUP: Dict[str, Tuple[str, str]] = {num: (key, name) for num, key, name in SETTINGS_INFO}
+
+# Settings that use the on/off/none toggle editor
+_TOGGLE_KEYS: frozenset = frozenset({"mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision", "mtp"})
+
+# Settings that use the KV-quant dropdown editor
+_KV_QUANT_KEYS: frozenset = frozenset({"k_quant", "v_quant"})
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge *override* into a deep-copy of *base*. Nested dicts are merged recursively."""
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 def load_config() -> Dict[str, Any]:
-    """Load configuration from JSON file, or create with defaults."""
+    """Load configuration from JSON file, or create with defaults.
+
+    After loading, API keys are resolved from environment variables (set via .env)."""
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
-            # Merge with defaults to ensure all keys exist (deep copy to avoid mutating module-level constants)
-            merged = copy.deepcopy(DEFAULT_CONFIG)
-            merged.update(config)
-            if "defaults" in config:
-                default_defaults = copy.deepcopy(DEFAULT_CONFIG["defaults"])
-                default_defaults.update(config["defaults"])
-                merged["defaults"] = default_defaults
+            merged = _deep_merge(DEFAULT_CONFIG, config)
+            _resolve_api_keys(merged)
             return merged
         except (json.JSONDecodeError, IOError) as e:
             print(f"[WARNING] Could not load config file: {e}")
             print("Using default configuration.")
-    return copy.deepcopy(DEFAULT_CONFIG)
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    _resolve_api_keys(config)
+    return config
 
 
 def save_config(config: Dict[str, Any]) -> None:
@@ -186,24 +253,28 @@ def get_model_path(rel_path: str) -> str:
 
 
 def get_llama_server_path() -> Optional[str]:
-    """Find llama-server executable."""
-    # Try llama-server.exe first (common naming)
-    server_path = os.path.join(LLAMA_CPP_DIR, "llama-server.exe")
-    if os.path.exists(server_path):
-        return server_path
+    """Find llama-server executable (result is cached after first call)."""
+    # Use a mutable default stored on the function itself to avoid global state
+    if not hasattr(get_llama_server_path, "_cache"):
+        server_names = ("llama-server.exe", "llama_server.exe")
+        # Try top-level directory first (common naming)
+        for name in server_names:
+            candidate = os.path.join(LLAMA_CPP_DIR, name)
+            if os.path.exists(candidate):
+                get_llama_server_path._cache = candidate  # type: ignore[attr-defined]
+                return candidate
 
-    # Try llama_server.exe
-    server_path = os.path.join(LLAMA_CPP_DIR, "llama_server.exe")
-    if os.path.exists(server_path):
-        return server_path
+        # Search in subdirectories
+        for root, _dirs, files in os.walk(LLAMA_CPP_DIR):
+            for file in files:
+                if file.lower() in server_names:
+                    path = os.path.join(root, file)
+                    get_llama_server_path._cache = path  # type: ignore[attr-defined]
+                    return path
 
-    # Search in subdirectories
-    for root, dirs, files in os.walk(LLAMA_CPP_DIR):
-        for file in files:
-            if file.lower() in ["llama-server.exe", "llama_server.exe"]:
-                return os.path.join(root, file)
+        get_llama_server_path._cache = None  # type: ignore[attr-defined]
 
-    return None
+    return getattr(get_llama_server_path, "_cache", None)  # type: ignore[return-value]
 
 
 def get_model_config(config: Dict[str, Any], model_key: str, preset_slug: str) -> Dict[str, Any]:
@@ -211,22 +282,18 @@ def get_model_config(config: Dict[str, Any], model_key: str, preset_slug: str) -
 
     Commit falls back to Coder settings if no commit-specific config exists.
     """
+    base_defaults = config.get("defaults", copy.deepcopy(DEFAULT_CONFIG["defaults"]))
     models = config.get("models", {})
-    default_defaults = config.get("defaults", copy.deepcopy(DEFAULT_CONFIG["defaults"]))
-    if model_key in models and isinstance(models[model_key], dict):
-        preset_settings = models[model_key].get(preset_slug)
-        if preset_settings is not None:
-            merged = default_defaults.copy()
-            merged.update(preset_settings)
+    model_cfg: Dict[str, Any] = {} if not isinstance(models.get(model_key), dict) else models[model_key]
+
+    # Try direct preset match first
+    for candidate_slug in (preset_slug, "coder" if preset_slug == "commit" else None):
+        if candidate_slug and candidate_slug in model_cfg:
+            merged = base_defaults.copy()
+            merged.update(model_cfg[candidate_slug])
             return merged
-        # Commit falls back to Coder settings when no commit-specific config exists
-        if preset_slug == "commit":
-            coder_settings = models[model_key].get("coder")
-            if coder_settings is not None:
-                merged = default_defaults.copy()
-                merged.update(coder_settings)
-                return merged
-    return default_defaults.copy()
+
+    return base_defaults.copy()
 
 
 def has_preset_config(config: Dict[str, Any], model_key: str, preset_slug: str) -> bool:
@@ -235,11 +302,11 @@ def has_preset_config(config: Dict[str, Any], model_key: str, preset_slug: str) 
     For 'commit', also returns True if 'coder' settings exist (since commit falls back to coder).
     """
     models = config.get("models", {})
-    if not isinstance(models.get(model_key), dict):
+    model_cfg = models.get(model_key)
+    if not isinstance(model_cfg, dict):
         return False
-    direct = preset_slug in models[model_key]
-    fallback = preset_slug == "commit" and "coder" in models[model_key]
-    return direct or fallback
+    effective_slugs = {preset_slug} | ({ "coder" } if preset_slug == "commit" else set())
+    return any(slug in model_cfg for slug in effective_slugs)
 
 
 def best_preset_for_model(config: Dict[str, Any], model_key: str, preferred: str) -> str:
@@ -247,52 +314,44 @@ def best_preset_for_model(config: Dict[str, Any], model_key: str, preferred: str
 
     Priority order:
       1. The explicitly saved 'last_preset' (preferred), if it has config for this model.
-      2. Any preset that has explicit config for this model (rp > coder > commit).
+      2. Any preset that has explicit config for this model (rp > coder).
       3. Fallback to the preferred default ('rp').
     """
-    models = config.get("models", {})
-    stored_presets = models[model_key] if isinstance(models.get(model_key), dict) else {}
-
-    # If preferred preset has explicit config, use it
+    # If preferred preset already has config, use it directly
     if has_preset_config(config, model_key, preferred):
         return preferred
 
-    # Otherwise pick the first preset (in priority order) that has saved settings for this model
-    fallback_order = ["rp", "coder"]  # commit is excluded here since it mirrors coder
-    for slug in fallback_order:
-        if slug in stored_presets or has_preset_config(config, model_key, slug):
+    # Otherwise pick the first preset (in priority order) with saved settings
+    for slug in ("rp", "coder"):  # commit excluded since it mirrors coder
+        if has_preset_config(config, model_key, slug):
             return slug
 
     return preferred
 
 
-def save_model_config(config: Dict[str, Any], model_key: str, preset_slug: str, model_settings: Dict[str, Any]) -> Dict[str, Any]:
+def save_model_config(
+    config: Dict[str, Any], model_key: str, preset_slug: str, model_settings: Dict[str, Any]
+) -> Dict[str, Any]:
     """Save model-specific configuration for a given preset.
 
     For the 'commit' preset, settings are saved under the 'coder' key instead,
     with thinking and p_thinking preserved from existing coder config (not overwritten).
     """
     target_slug = "coder" if preset_slug == "commit" else preset_slug
-    
-    if "models" not in config:
-        config["models"] = {}
-    if model_key not in config["models"]:
-        config["models"][model_key] = {}
+    config.setdefault("models", {}).setdefault(model_key, {})
 
-    # When saving for commit, preserve existing thinking/p_thinking from coder config
+    settings_to_save = copy.deepcopy(model_settings)
+
+    # When saving for commit, preserve thinking/p_thinking from existing coder config
     if preset_slug == "commit":
-        settings_to_save = copy.deepcopy(model_settings)
         settings_to_save.pop("thinking", None)
         settings_to_save.pop("p_thinking", None)
-        
-        # Merge with existing coder config to keep thinking/p_thinking intact
         existing_coder = dict(config["models"][model_key].get("coder", {}))
         existing_coder.update(settings_to_save)
         config["models"][model_key][target_slug] = existing_coder
     else:
-        settings_to_save = copy.deepcopy(model_settings)
         config["models"][model_key][target_slug] = settings_to_save
-    
+
     save_config(config)
     return config
 
@@ -343,7 +402,7 @@ def display_settings_menu(settings: Dict[str, Any]) -> None:
     print("\nAvailable settings to modify:")
     print("=" * 60)
 
-    for num, name, key in SETTINGS_INFO:
+    for num, key, name in SETTINGS_INFO:
         current = settings.get(key, "(not set)")
         print(f"  {num}. {name:<18} [{current}]")
 
@@ -360,13 +419,8 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         if choice == "0":
             break
 
-        # Find the selected setting
-        selected = None
-        for num, name, key in SETTINGS_INFO:
-            if choice == num:
-                selected = (key, name)
-                break
-
+        # Look up the selected setting by number (O(1))
+        selected = _SETTINGS_LOOKUP.get(choice)
         if selected is None:
             print("Invalid choice. Try again.")
             continue
@@ -375,11 +429,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         current = settings.get(key, "(not set)")
         print(f"\nCurrent value for {name}: {current}")
 
-        # Determine if this setting should use selection menu or free input
-        toggle_settings = ["mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision", "mtp"]
-        kv_quant_settings = ["k_quant", "v_quant"]
-
-        if key in toggle_settings:
+        if key in _TOGGLE_KEYS:
             # Show selection options for toggle-like settings
             print(f"Select value for {name}:")
             print("  1. on")
@@ -400,7 +450,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     print("Invalid choice. Enter 1 (on), 2 (off), or 3/empty (none)")
 
-        elif key in kv_quant_settings:
+        elif key in _KV_QUANT_KEYS:
             # Show selection options for KV quant settings
             print(f"Select value for {name}:")
             for i, opt in enumerate(KV_QUANT_OPTIONS, 1):
@@ -408,7 +458,7 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
 
             while True:
                 choice = input("> ").strip()
-                if choice == "" or choice == "6":
+                if choice == "" or choice == str(len(KV_QUANT_OPTIONS)):
                     settings[key] = None
                     break
                 try:
@@ -470,27 +520,23 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             # Free text input for numeric/text settings
             print("Enter new value (or 'none' to skip this parameter):")
             new_value = input("> ").strip().lower()
-            if new_value == "none" or new_value == "" or new_value == "null":
+            if new_value in ("", "none", "null"):
                 settings[key] = None
             else:
                 # Try to convert to appropriate numeric type
                 try:
-                    if "." in new_value:
-                        settings[key] = float(new_value)
-                    else:
-                        settings[key] = int(new_value)
+                    settings[key] = float(new_value) if "." in new_value else int(new_value)
                 except ValueError:
                     settings[key] = new_value
 
         print(f"[OK] {name} set to: {settings[key]}")
-        # Re-display the menu after each change
         display_settings_menu(settings)
         print("Enter the number of the setting to modify (0 when done):")
 
     return settings
 
 
-# === Simple parameter mapping: setting_key -> CLI flag ===
+# === Simple parameter mapping: setting_key → CLI flag ===
 SIMPLE_PARAM_MAP = [
     ("context", "-c"),
     ("gpu_offload", "-ngl"),
@@ -510,14 +556,20 @@ SIMPLE_PARAM_MAP = [
 
 
 def _format_number(v: float) -> str:
-    """Format float as int string when whole, otherwise keep decimals."""
+    """Format a number: whole numbers as int string, otherwise keep decimals."""
     return str(int(v)) if v == int(v) else str(v)
 
 
+def _display_effective_settings(preset_slug: str, base_settings: Dict[str, Any]) -> None:
+    """Apply preset overrides and display the effective settings."""
+    effective = apply_preset_overrides(preset_slug, base_settings)
+    display_settings(effective)
+
+
 def _add_simple_param(cmd: List[str], flag: str, value: Any) -> None:
-    """Add a simple parameter to the command if value is not None, False, or 0."""
-    if value is not None and value is not False and value != 0:
-        cmd.extend([flag, str(value)])
+    """Add a simple parameter to the command when value is \"truthy\" (not None/False/0)."""
+    if value not in (None, False, 0):
+        cmd += [flag, str(value)]
 
 
 def build_command(model_path: str, settings: Dict[str, Any], host: str, port: int, api_key: str) -> List[str]:
@@ -533,79 +585,72 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
     for key, flag in SIMPLE_PARAM_MAP:
         _add_simple_param(cmd, flag, settings.get(key))
 
-    # --- Special parameters (non-standard logic) ---
-    # mmap (--no-mmap): False means --no-mmap, True means nothing special
-    mmap = settings.get("mmap")
-    if mmap is False:
+    # mmap (--no-mmap): False explicitly disables memory-mapped file loading
+    if settings.get("mmap") is False:
         cmd.append("--no-mmap")
 
-    # Flash Attention (--flash-attn): True means enable
-    fa = settings.get("flash_attention")
-    if fa is True:
-        cmd.extend(["--flash-attn", "on"])
+    # Flash Attention: True enables flash attention optimization
+    if settings.get("flash_attention") is True:
+        cmd += ["--flash-attn", "on"]
 
-    # Chat Template Kwargs: Merge thinking + preserve_thinking into a single --chat-template-kwargs argument
+    # Chat Template Kwargs: Merge thinking + preserve_thinking into a single argument
     chat_kwargs = {}
-    thinking_val = settings.get("thinking")
-    if thinking_val is not None and isinstance(thinking_val, bool):
+    if (thinking_val := settings.get("thinking")) is not None and isinstance(thinking_val, bool):
         chat_kwargs["enable_thinking"] = thinking_val
-    p_thinking_val = settings.get("p_thinking")
-    if p_thinking_val is not None and isinstance(p_thinking_val, bool):
+    if (p_thinking_val := settings.get("p_thinking")) is not None and isinstance(p_thinking_val, bool):
         chat_kwargs["preserve_thinking"] = p_thinking_val
     if chat_kwargs:
-        cmd.extend(["--chat-template-kwargs", json.dumps(chat_kwargs)])
+        cmd += ["--chat-template-kwargs", json.dumps(chat_kwargs)]
 
-    # Jinja (--jinja): True means enable
-    jinja = settings.get("jinja")
-    if jinja is True:
+    # Jinja (--jinja): True enables jinja template parsing
+    if settings.get("jinja") is True:
         cmd.append("--jinja")
 
-    # Vision / mmproj: When enabled, add --mmproj flag pointing to first mmproj*.gguf found in the same directory as the model
-    vision = settings.get("vision")
-    if vision is True:
+    # Vision / mmproj: When enabled, add --mmproj pointing to first mmproj*.gguf in model directory
+    if settings.get("vision") is True:
         model_dir = os.path.dirname(model_path)
-        # Scan for any mmproj file matching mmproj*.gguf pattern
-        mmproj_files = [f for f in os.listdir(model_dir)
-                        if f.lower().startswith("mmproj") and f.endswith(".gguf")]
+        mmproj_files = sorted(
+            f for f in os.listdir(model_dir)
+            if f.lower().startswith("mmproj") and f.endswith(".gguf")
+        )
         if not mmproj_files:
             print(f"[WARNING] Vision enabled but no mmproj file found in {model_dir}")
         else:
-            mmproj_path = os.path.join(model_dir, sorted(mmproj_files)[0])
-            cmd.extend(["--mmproj", mmproj_path])
+            cmd += ["--mmproj", os.path.join(model_dir, mmproj_files[0])]
 
     # --- Server Settings ---
-    cmd.extend(["--host", host])
-    cmd.extend(["--port", str(port)])
-
-    cmd.extend(["--no-webui"])
-    cmd.extend(["--n-predict", str(-1)])
-    cmd.extend(["-mg", str(0)])
+    cmd += ["--host", host, "--port", str(port)]
+    cmd.append("--no-webui")
+    cmd += ["--n-predict", "-1"]  # -1 = unlimited prediction tokens
+    cmd += ["-mg", "0"]           # memory guard: 0 = no safety margin
 
     # MTP (Multi-Token Prediction): --spec-type draft-mtp when enabled
-    mtp = settings.get("mtp")
-    if mtp is True:
-        cmd.extend(["--spec-type", "draft-mtp"])
-        draft_n_max = settings.get("draft_n_max")
-        if draft_n_max is not None and isinstance(draft_n_max, int) and draft_n_max > 0:
-            cmd.extend(["--spec-draft-n-max", str(draft_n_max)])
+    if settings.get("mtp") is True:
+        cmd += ["--spec-type", "draft-mtp"]
+        if isinstance(draft_n_max := settings.get("draft_n_max"), int) and draft_n_max > 0:
+            cmd += ["--spec-draft-n-max", str(draft_n_max)]
 
     # Tensor Split: multi-GPU layer distribution (--tensor-split)
     tensor_split = settings.get("tensor_split")
-    if tensor_split is not None and isinstance(tensor_split, list) and len(tensor_split) >= 2:
-        # Format each value: use int representation when .0 (e.g. 60 instead of 60.0), otherwise keep decimal
+    if isinstance(tensor_split, list) and len(tensor_split) >= 2:
         split_str = ",".join(_format_number(v) for v in tensor_split)
-        cmd.extend(["--tensor-split", split_str])
+        cmd += ["--tensor-split", split_str]
 
-    cmd.extend(["--no-slots"])
-    cmd.extend(["--swa-full"])
+    cmd.append("--no-slots")
+    cmd.append("--swa-full")
 
     if api_key:
-        cmd.extend(["--api-key", api_key])
+        cmd += ["--api-key", api_key]
 
     return cmd
 
 
-def _listen_for_stop_key(stop_flag: list, stop_event: threading.Event) -> None:
+# --- Keyboard listener for graceful server shutdown ---
+
+_STOP_KEY = "q"
+
+
+def _listen_for_stop_key(stop_flag: List[bool], stop_event: threading.Event) -> None:
     """Background thread that listens for 'q' key press and sets the stop flag."""
     while not stop_event.is_set():
         if msvcrt.kbhit():
@@ -614,6 +659,16 @@ def _listen_for_stop_key(stop_flag: list, stop_event: threading.Event) -> None:
                 stop_flag[0] = True
                 return
         time.sleep(0.05)
+
+
+def _terminate_process(process: subprocess.Popen) -> None:
+    """Gracefully terminate a process, killing it if it doesn't exit in time."""
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        process.kill()
+        process.wait()
 
 
 def launch_server(cmd: List[str]) -> bool:
@@ -637,35 +692,28 @@ def launch_server(cmd: List[str]) -> bool:
     user_stopped_via_q = False
 
     try:
-        # Use a mutable list as shared flag between threads
-        stop_flag = [False]  # index is set by keyboard listener thread
-
-        # Start keyboard listener daemon thread
+        # Mutable list used as shared flag between threads
+        stop_flag = [False]
         stop_event = threading.Event()
-        kb_thread = threading.Thread(target=_listen_for_stop_key, args=(stop_flag, stop_event), daemon=True)
+        kb_thread = threading.Thread(
+            target=_listen_for_stop_key, args=(stop_flag, stop_event), daemon=True
+        )
         kb_thread.start()
 
-        # Start the server process
         process = subprocess.Popen(cmd)
 
         # Wait for either the process to exit or user to press 'q'
         while True:
             if stop_flag[0]:
                 print("\n\n[INFO] User requested stop (pressed 'q'). Stopping server...")
-                try:
-                    process.terminate()
-                    process.wait(timeout=5)
-                except Exception:
-                    process.kill()
+                _terminate_process(process)
                 user_stopped_via_q = True
                 break
 
-            # Check if process is still running
-            retcode = process.poll()
-            if retcode is not None:
+            if process.poll() is not None:  # Process exited on its own
                 break
 
-            time.sleep(0.05)  # Avoid busy-waiting too much
+            time.sleep(0.05)
 
         stop_event.set()
         kb_thread.join(timeout=1)
@@ -673,12 +721,7 @@ def launch_server(cmd: List[str]) -> bool:
     except KeyboardInterrupt:
         print("\n[INFO] Server stopped by user (Ctrl+C).")
         if process is not None:
-            try:
-                process.terminate()
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            _terminate_process(process)
     except FileNotFoundError:
         print(f"\n[ERROR] Executable not found: {cmd[0]}")
     except Exception as e:
@@ -747,9 +790,7 @@ def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]
     base_settings = get_model_config(config, model_key, preset_slug)
     has_existing = has_preset_config(config, model_key, preset_slug)
 
-    # Display effective settings (with overrides applied on-the-fly for display only)
-    effective = apply_preset_overrides(preset_slug, base_settings)
-    display_settings(effective)
+    _display_effective_settings(preset_slug, base_settings)
 
     if has_existing:
         print("This model has existing configuration.")
@@ -759,9 +800,8 @@ def apply_model_selection(selected_model: Dict[str, str], config: Dict[str, Any]
     return model_key, base_settings
 
 
-def switch_preset(config: Dict[str, Any], models: List[Dict[str, str]],
-                  selected_model: Dict[str, str], model_key: str, current_preset: str) -> Tuple[str, Dict[str, Any]]:
-    """Display preset selection menu and return (new_preset_slug, new_settings)."""
+def switch_preset(config: Dict[str, Any], model_key: str, current_preset: str) -> Tuple[str, Dict[str, Any]]:
+    """Display preset selection menu and return (new_preset_slug, base_settings)."""
     print("\n--- Select a Preset ---\n")
 
     available = list(PRESETS.items())  # [("rp", {"display": "RP"}), ...]
@@ -791,16 +831,17 @@ def switch_preset(config: Dict[str, Any], models: List[Dict[str, str]],
                 print("Invalid input. Please enter a number or preset name.")
                 continue
 
-        # If user selects the same preset, confirm and keep it
         return selected_slug, get_model_config(config, model_key, selected_slug)
 
 
-def clear_screen():
-    """Clear terminal screen."""
+# --- Terminal utilities ---
+
+def clear_screen() -> None:
+    """Clear the terminal screen (cross-platform)."""
     os.system("cls" if os.name == "nt" else "clear")
 
 
-def print_header(title: str):
+def print_header(title: str) -> None:
     """Print a formatted header."""
     print("\n" + "=" * 60)
     print(f"  {title}")
@@ -823,6 +864,9 @@ def main():
         config["api_keys"] = {"rp": legacy, "coder": legacy}
         print("[INFO] Migrated API key — please verify Coder preset key.")
 
+    # Resolve any remaining empty keys from environment variables (.env)
+    _resolve_api_keys(config)
+
     # Scan for models
     print("\n[INFO] Scanning for GGUF models...")
     models = scan_models()
@@ -836,14 +880,9 @@ def main():
 
     print(f"[OK] Found {len(models)} model(s).")
 
-    # Get last used model from config (if any)
-    last_model_key = config.get("last_model", None)
-    last_model = None
-    if last_model_key:
-        for m in models:
-            if m["path"] == last_model_key:
-                last_model = m
-                break
+    # Restore last-used model from config
+    _last_key = config.get("last_model")
+    last_model = next((m for m in models if m["path"] == _last_key), None) if _last_key else None
 
     # Get last used preset (default to "rp")
     current_preset = config.get("last_preset", "rp")
@@ -911,24 +950,24 @@ def main():
             # Save updated settings for current preset
             config = save_model_config(config, model_key, current_preset, model_settings)
 
-            # Re-apply overrides and display
-            effective_settings = apply_preset_overrides(current_preset, model_settings)
-            display_settings(effective_settings)
+            _display_effective_settings(current_preset, model_settings)
+
         elif action == "3":
             # Switch preset — use base (raw) settings so edits save correctly.
             # Overrides are only applied at launch and display time.
-            new_preset, base_settings = switch_preset(
-                config, models, selected_model, model_key, current_preset
-            )
+            new_preset, base_settings = switch_preset(config, model_key, current_preset)
             if new_preset != current_preset:
                 print(f"\n[OK] Preset switched to {PRESETS[new_preset]['display']}")
 
-            # Display effective settings (overrides applied on-the-fly for display only)
-            effective_settings = apply_preset_overrides(new_preset, base_settings)
-            display_settings(effective_settings)
+            _display_effective_settings(new_preset, base_settings)
 
             current_preset = new_preset
             model_settings = base_settings
+
+            # Persist preset switch to config so next launch restores it
+            config["last_model"] = model_key
+            config["last_preset"] = current_preset
+            save_config(config)
 
         elif action == "4":
             # Return to model selection (empty input reuses current model)
@@ -938,14 +977,24 @@ def main():
                 continue
 
             selected_model = new_model
-            _mk = selected_model["path"]
+            new_model_key = selected_model["path"]
             # Determine the best preset for this model
-            current_preset = best_preset_for_model(config, _mk, current_preset)
-            if PRESETS[current_preset]["display"]:
-                print(f"\n[INFO] Using preset: {PRESETS[current_preset]['display']}")
+            current_preset = best_preset_for_model(config, new_model_key, current_preset)
+            print(f"\n[INFO] Using preset: {PRESETS[current_preset]['display']}")
 
             model_key, model_settings = apply_model_selection(selected_model, config, current_preset)
+
+            # Persist last used model and preset to config after any state change
+            config["last_model"] = model_key
+            config["last_preset"] = current_preset
+            save_config(config)
+
         elif action == "5":
+            # Save final state before exiting so next launch restores correctly
+            config["last_model"] = model_key
+            config["last_preset"] = current_preset
+            save_config(config)
+
             print("\nExiting...")
             return
         else:
