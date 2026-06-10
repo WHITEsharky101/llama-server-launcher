@@ -93,6 +93,7 @@ DEFAULT_CONFIG = {
         "p_thinking": None,
         "jinja": None,
         "vision": None,
+        "image_min_tokens": None,
         "tensor_split": None
     }
 }
@@ -161,7 +162,8 @@ SETTINGS_INFO = [
     ("20", "p_thinking", "Preserve Think"),
     ("21", "jinja", "Jinja"),
     ("22", "vision", "Vision"),
-    ("23", "tensor_split", "GPU Tensor Split"),
+    ("23", "image_min_tokens", "Image Min Tokens"),
+    ("24", "tensor_split", "GPU Tensor Split"),
 ]
 
 # Build a lookup: numeric choice → (config_key, display_name) for O(1) selection
@@ -388,6 +390,11 @@ def display_settings(settings: Dict[str, Any]) -> None:
     print(f"  Preserve Think:      {settings.get('p_thinking', 'N/A')}")
     print(f"  Jinja:               {settings.get('jinja', 'N/A')}")
     print(f"  Vision:              {settings.get('vision', 'N/A')}")
+    image_min_tokens = settings.get("image_min_tokens")
+    if isinstance(image_min_tokens, int) and image_min_tokens > 0:
+        print(f"  Image Min Tokens:    {image_min_tokens}")
+    else:
+        print(f"  Image Min Tokens:    {'disabled'}")
     print("\n--- Multi-GPU Settings ---")
     ts = settings.get("tensor_split")
     if ts is not None and isinstance(ts, list):
@@ -516,6 +523,29 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
                     break
                 except ValueError:
                     print("Invalid input. Enter a positive integer.")
+
+        elif key == "image_min_tokens":
+            # Image Min Tokens: positive integer for --image-min-tokens N
+            vision_val = settings.get("vision")
+            if vision_val is not True:
+                print("[INFO] Vision is not enabled (on). Image Min Tokens will be ignored at launch.")
+                print("Enable Vision first if you want this setting to take effect.")
+            print("Enter a positive integer value for image min tokens (or 'none' to clear):")
+            while True:
+                new_value = input("> ").strip().lower()
+                if new_value == "" or new_value in ("none", "null"):
+                    settings[key] = None
+                    break
+                try:
+                    val = int(new_value)
+                    if val <= 0:
+                        print("Value must be a positive integer (> 0).")
+                        continue
+                    settings[key] = val
+                    break
+                except ValueError:
+                    print("Invalid input. Enter a positive integer.")
+
         else:
             # Free text input for numeric/text settings
             print("Enter new value (or 'none' to skip this parameter):")
@@ -617,6 +647,11 @@ def build_command(model_path: str, settings: Dict[str, Any], host: str, port: in
             print(f"[WARNING] Vision enabled but no mmproj file found in {model_dir}")
         else:
             cmd += ["--mmproj", os.path.join(model_dir, mmproj_files[0])]
+            cmd.append("--no-mmproj-offload")
+
+    # Image Min Tokens: --image-min-tokens N when set (vision-related)
+    if isinstance(image_min_tokens := settings.get("image_min_tokens"), int) and image_min_tokens > 0:
+        cmd += ["--image-min-tokens", str(image_min_tokens)]
 
     # --- Server Settings ---
     cmd += ["--host", host, "--port", str(port)]
