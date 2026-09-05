@@ -51,7 +51,6 @@ def launch_server(cmd: List[str]) -> bool:
     user_stopped_via_q = False
 
     try:
-        # Mutable list used as shared flag between threads
         stop_flag = [False]
         stop_event = threading.Event()
         kb_thread = threading.Thread(

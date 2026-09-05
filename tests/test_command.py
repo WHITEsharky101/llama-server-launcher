@@ -41,24 +41,26 @@ def test_build_command_head_and_fixed_flags(fake_exe):
     # Fixed server settings block
     assert has_seq(cmd, ["--host", "10.0.0.5", "--port", "5056"])
     assert "--no-webui" in cmd
-    assert has_seq(cmd, ["--n-predict", "-1"])
     assert has_seq(cmd, ["-mg", "0"])
+    assert "--n-predict" not in cmd
     # Trailing fixed flags, in order
     assert "--no-slots" in cmd
     assert has_seq(cmd, ["--timeout", "30000"])
-    assert has_seq(cmd, ["-n", "32768"])
+    assert has_seq(cmd, ["-n", "-1"])
     assert cmd.index("--no-slots") < cmd.index("--timeout") < cmd.index("-n")
 
 
 def test_simple_params_present_with_defaults(fake_exe):
-    cmd = command.build_command("m.gguf", default_settings(), "h", 1, "")
-    for flag_value in (
-        ["-c", "32768"], ["-ngl", "99"], ["-t", "8"], ["-b", "1024"], ["-np", "1"],
-        ["--temp", "1"], ["-ctk", "turbo3"], ["-ctv", "turbo3"],
-        ["--top-k", "20"], ["--top-p", "0.95"], ["--min-p", "0.05"],
-        ["--repeat-penalty", "1.1"], ["--presence-penalty", "1.5"],
-    ):
-        assert has_seq(cmd, flag_value), f"missing {flag_value}"
+    """Every simple param with a truthy value in the defaults is emitted as flag+value.
+
+    Derives expectations from SIMPLE_PARAM_MAP so it stays valid if defaults change."""
+    s = default_settings()
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    for key, flag in command.SIMPLE_PARAM_MAP:
+        value = s.get(key)
+        if value in (None, False, 0):
+            continue
+        assert has_seq(cmd, [flag, str(value)]), f"missing {flag} {value}"
 
 
 def test_none_or_zero_params_are_omitted(fake_exe):
@@ -90,7 +92,7 @@ def test_flash_attn_and_jinja_flags(fake_exe):
     s["flash_attention"] = True
     s["jinja"] = True
     cmd = command.build_command("m.gguf", s, "h", 1, "")
-    assert has_seq(cmd, ["--flash-attn", "on"])
+    assert has_seq(cmd, ["-fa", "on"])
     assert "--jinja" in cmd
 
 

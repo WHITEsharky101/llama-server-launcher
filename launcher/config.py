@@ -7,10 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 # === Configuration Paths ===
-# Overridable via environment variables (see .env.example).
-DEFAULT_MODELS_DIR = r"C:\Users\WHITEsharky\.lmstudio\models"
-DEFAULT_LLAMA_CPP_DIR = r"C:\Users\WHITEsharky\.lmstudio\extensions\backends\llama-cpp-mtp-turboquant"
-
+# Resolved from .env / environment variables (see .env.example).
 CONFIG_FILE = Path(__file__).resolve().parent.parent / "llama_server_config.json"
 
 
@@ -37,7 +34,7 @@ def load_dotenv(env_path: Optional[Path] = None) -> Dict[str, str]:
             key, _, value = line.partition("=")
             key = key.strip()
             value = value.strip().strip("\"'")
-            os.environ.setdefault(key, value)  # do not override existing env vars
+            os.environ.setdefault(key, value)
             loaded[key] = value
 
     return loaded
@@ -46,9 +43,9 @@ def load_dotenv(env_path: Optional[Path] = None) -> Dict[str, str]:
 # Load .env before any configuration is read (side-effect: populates os.environ).
 load_dotenv()
 
-# Resolve paths from environment variables (may be set via .env above).
-MODELS_DIR = os.environ.get("MODELS_DIR", DEFAULT_MODELS_DIR)
-LLAMA_CPP_DIR = os.environ.get("LLAMA_CPP_DIR", DEFAULT_LLAMA_CPP_DIR)
+# Resolve paths from environment variables (set via .env above; None if not configured).
+MODELS_DIR = os.environ.get("MODELS_DIR")
+LLAMA_CPP_DIR = os.environ.get("LLAMA_CPP_DIR")
 
 
 def resolve_api_keys(config: Dict[str, Any]) -> None:
@@ -72,12 +69,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "gpu_offload": 99,
         "cpu_moe": None,
         "threads": 8,
-        "batch_size": 1024,
+        "batch_threads": 8,
+        "batch_size": 2048,
         "parallel": 1,
         "mmap": False,
         "flash_attention": True,
-        "k_quant": "turbo3",
-        "v_quant": "turbo3",
+        "k_quant": "q4_0",
+        "v_quant": "q4_0",
         "mtp": None,
         "draft_n_max": None,
         "temp": 1,

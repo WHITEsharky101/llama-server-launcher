@@ -89,10 +89,8 @@ def test_load_config_merges_saved_over_defaults(tmp_path, monkeypatch):
 
     cfg = config.load_config(config_file=path)
     assert cfg["port"] == 9999
-    # Saved value wins, untouched defaults preserved
     assert cfg["defaults"]["context"] == 8192
     assert cfg["defaults"]["gpu_offload"] == config.DEFAULT_CONFIG["defaults"]["gpu_offload"]
-    # Key resolved from env (not present in saved file)
     assert cfg["api_keys"].get("rp") == "from-env"
 
 

@@ -24,7 +24,11 @@ def scan_models(models_dir: Optional[str] = None) -> List[Model]:
 
     Returns a sorted list of Model dataclasses. mmproj files are skipped (vision projections, not models)."""
     models: List[Model] = []
-    models_path = Path(models_dir or config.MODELS_DIR)
+    resolved_dir = models_dir or config.MODELS_DIR
+    if not resolved_dir:
+        print("[ERROR] MODELS_DIR is not set (configure it in .env).")
+        return models
+    models_path = Path(resolved_dir)
     if not models_path.exists():
         print(f"[ERROR] Models directory not found: {models_path}")
         return models
@@ -32,14 +36,13 @@ def scan_models(models_dir: Optional[str] = None) -> List[Model]:
     for gguf_file in models_path.rglob("*.gguf"):
         if not gguf_file.is_file():
             continue
-        # Skip mmproj files (vision projection files, not models)
         if gguf_file.name.lower().startswith("mmproj"):
             continue
 
-        model_name = gguf_file.stem  # name without .gguf
+        model_name = gguf_file.stem
         rel_parts = gguf_file.relative_to(models_path).parts
         rel_path = "/".join(rel_parts[:-1]) + "/" + model_name
-        display_name = f"{rel_parts[0]}/{model_name}"  # author/model_name
+        display_name = f"{rel_parts[0]}/{model_name}"
         models.append(Model(display=display_name, path=rel_path))
 
     models.sort(key=lambda m: m.display)

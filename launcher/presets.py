@@ -36,7 +36,7 @@ PRESETS: Dict[str, Preset] = {
 }
 
 # Default slug when none is configured / recognized.
-DEFAULT_PRESET = "rp"
+DEFAULT_PRESET = "coder"
 
 
 def get_preset(slug: str) -> Preset:

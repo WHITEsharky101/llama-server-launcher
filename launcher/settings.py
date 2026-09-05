@@ -16,33 +16,34 @@ SETTINGS_INFO: List[Tuple[str, str, str]] = [
     ("2", "gpu_offload", "GPU Offload"),
     ("3", "cpu_moe", "CPU MOE"),
     ("4", "threads", "Threads"),
-    ("5", "batch_size", "Batch Size"),
-    ("6", "parallel", "Parallel"),
-    ("7", "mmap", "mmap"),
-    ("8", "flash_attention", "Flash Attention"),
-    ("9", "k_quant", "K Quant"),
-    ("10", "v_quant", "V Quant"),
-    ("11", "mtp", "MTP"),
-    ("12", "draft_n_max", "Draft N Max"),
-    ("13", "temp", "Temp"),
-    ("14", "top_k", "Top K"),
-    ("15", "top_p", "Top P"),
-    ("16", "min_p", "Min P"),
-    ("17", "repeat_penalty", "Repeat Penalty"),
-    ("18", "presence_penalty", "Presence Penalty"),
-    ("19", "thinking", "Thinking"),
-    ("20", "p_thinking", "Preserve Think"),
-    ("21", "jinja", "Jinja"),
-    ("22", "vision", "Vision"),
-    ("23", "image_min_tokens", "Image Min Tokens"),
-    ("24", "tensor_split", "GPU Tensor Split"),
+    ("5", "batch_threads", "Batch Threads"),
+    ("6", "batch_size", "Batch Size"),
+    ("7", "parallel", "Parallel"),
+    ("8", "mmap", "mmap"),
+    ("9", "flash_attention", "Flash Attention"),
+    ("10", "k_quant", "K Quant"),
+    ("11", "v_quant", "V Quant"),
+    ("12", "mtp", "MTP"),
+    ("13", "draft_n_max", "Draft N Max"),
+    ("14", "temp", "Temp"),
+    ("15", "top_k", "Top K"),
+    ("16", "top_p", "Top P"),
+    ("17", "min_p", "Min P"),
+    ("18", "repeat_penalty", "Repeat Penalty"),
+    ("19", "presence_penalty", "Presence Penalty"),
+    ("20", "thinking", "Thinking"),
+    ("21", "p_thinking", "Preserve Think"),
+    ("22", "jinja", "Jinja"),
+    ("23", "vision", "Vision"),
+    ("24", "image_min_tokens", "Image Min Tokens"),
+    ("25", "tensor_split", "GPU Tensor Split"),
 ]
 
 # Build a lookup: numeric choice → (config_key, display_name) for O(1) selection
 _SETTINGS_LOOKUP: Dict[str, Tuple[str, str]] = {num: (key, name) for num, key, name in SETTINGS_INFO}
 
 # === KV Cache Quantization Options ===
-KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "none"]
+KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "iq4_nl", "none"]
 
 # Settings that use the on/off/none toggle editor
 _TOGGLE_KEYS: frozenset = frozenset({"mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision", "mtp"})
@@ -66,10 +67,10 @@ def _edit_toggle(settings: Dict[str, Any], key: str, name: str) -> None:
             settings[key] = None
             break
         elif choice == "1":
-            settings[key] = True   # on
+            settings[key] = True
             break
         elif choice == "2":
-            settings[key] = False  # off
+            settings[key] = False
             break
         else:
             print("Invalid choice. Enter 1 (on), 2 (off), or 3/empty (none)")
@@ -223,7 +224,7 @@ _FORMATTERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
 # Display sections in the order shown by the original UI
 _DISPLAY_SECTIONS: List[Tuple[str, List[str]]] = [
     ("Model Parameters", [
-        "context", "gpu_offload", "cpu_moe", "threads", "batch_size", "parallel",
+        "context", "gpu_offload", "cpu_moe", "threads", "batch_threads", "batch_size", "parallel",
         "mmap", "flash_attention", "k_quant", "v_quant", "mtp", "draft_n_max",
     ]),
     ("Generation Settings", [
@@ -282,7 +283,6 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         if choice == "0":
             break
 
-        # Look up the selected setting by number (O(1))
         selected = _SETTINGS_LOOKUP.get(choice)
         if selected is None:
             print("Invalid choice. Try again.")

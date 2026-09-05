@@ -33,9 +33,7 @@ def test_handle_launch_builds_command_and_persists(monkeypatch):
     assert captured["kwargs"]["settings"]["thinking"] is False
     # API key resolved via the preset's key field (commit -> coder key)
     assert captured["kwargs"]["api_key"] == ""
-    # Command was launched
     assert captured["cmd"] == ["fake", "exe"]
-    # last_model / last_preset persisted
     assert captured["saved"]["last_model"] == "author/model"
     assert captured["saved"]["last_preset"] == "commit"
 

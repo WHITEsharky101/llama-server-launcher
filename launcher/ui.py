@@ -50,7 +50,6 @@ def select_model(
     while True:
         choice = input(prompt).strip()
 
-        # Handle empty input -> use last model
         if choice == "" and last_model is not None:
             return last_model
 
@@ -64,7 +63,6 @@ def select_model(
             else:
                 print(f"Invalid choice. Please enter 1-{len(models)}")
         except ValueError:
-            # Empty input with no last model is handled above; otherwise invalid
             if choice != "":
                 print("Invalid input. Please enter a number.")
 

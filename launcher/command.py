@@ -18,6 +18,7 @@ SIMPLE_PARAM_MAP = [
     ("gpu_offload", "-ngl"),
     ("cpu_moe", "--n-cpu-moe"),
     ("threads", "-t"),
+    ("batch_threads", "-tb"),
     ("batch_size", "-b"),
     ("parallel", "-np"),
     ("temp", "--temp"),
@@ -40,15 +41,16 @@ def format_number(v: float) -> str:
 def find_llama_server(llama_cpp_dir: Optional[str] = None) -> Optional[str]:
     """Find the llama-server executable under *llama_cpp_dir* (result is cached)."""
     base = llama_cpp_dir or config.LLAMA_CPP_DIR
+    if not base:
+        print("[ERROR] LLAMA_CPP_DIR is not set (configure it in .env).")
+        return None
     server_names = ("llama-server.exe", "llama_server.exe")
 
-    # Try top-level directory first (common naming)
     for name in server_names:
         candidate = os.path.join(base, name)
         if os.path.exists(candidate):
             return candidate
 
-    # Search in subdirectories
     for root, _dirs, files in os.walk(base):
         for file in files:
             if file.lower() in server_names:
@@ -85,7 +87,7 @@ def _append_mmap(cmd: List[str], settings: Dict[str, Any]) -> None:
 def _append_flash_attn(cmd: List[str], settings: Dict[str, Any]) -> None:
     """Flash Attention: True enables flash attention optimization."""
     if settings.get("flash_attention") is True:
-        cmd += ["--flash-attn", "on"]
+        cmd += ["-fa", "on"]
 
 
 def _append_chat_template_kwargs(cmd: List[str], settings: Dict[str, Any]) -> None:
@@ -126,8 +128,7 @@ def _append_server_settings(cmd: List[str], host: str, port: int) -> None:
     """Host/port plus fixed server flags."""
     cmd += ["--host", host, "--port", str(port)]
     cmd.append("--no-webui")
-    cmd += ["--n-predict", "-1"]  # -1 = unlimited prediction tokens
-    cmd += ["-mg", "0"]           # memory guard: 0 = no safety margin
+    cmd += ["-mg", "0"]
 
 
 def _append_mtp(cmd: List[str], settings: Dict[str, Any]) -> None:
@@ -152,7 +153,7 @@ def _append_fixed_flags(cmd: List[str]) -> None:
     #cmd.append("--swa-full")
     #cmd += ["--reasoning", "off"]
     cmd += ["--timeout", "30000"]
-    cmd += ["-n", "32768"]
+    cmd += ["-n", "-1"]
 
 
 def build_command(
