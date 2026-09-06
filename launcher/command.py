@@ -115,11 +115,14 @@ def _append_vision(cmd: List[str], settings: Dict[str, Any], model_path: str) ->
             print(f"[WARNING] Vision enabled but no mmproj file found in {os.path.dirname(model_path)}")
         else:
             cmd += ["--mmproj", mmproj]
-            #cmd.append("--no-mmproj-offload")
+            if settings.get("mmproj_offload") is False:
+                cmd.append("--no-mmproj-offload")
 
 
 def _append_image_min_tokens(cmd: List[str], settings: Dict[str, Any]) -> None:
-    """Image Min Tokens: --image-min-tokens N when set (vision-related)."""
+    """Image Min Tokens: --image-min-tokens N when set (only when vision is on)."""
+    if settings.get("vision") is not True:
+        return
     if isinstance(image_min_tokens := settings.get("image_min_tokens"), int) and image_min_tokens > 0:
         cmd += ["--image-min-tokens", str(image_min_tokens)]
 

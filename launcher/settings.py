@@ -36,7 +36,8 @@ SETTINGS_INFO: List[Tuple[str, str, str]] = [
     ("22", "jinja", "Jinja"),
     ("23", "vision", "Vision"),
     ("24", "image_min_tokens", "Image Min Tokens"),
-    ("25", "tensor_split", "GPU Tensor Split"),
+    ("25", "mmproj_offload", "MMProj Offload"),
+    ("26", "tensor_split", "GPU Tensor Split"),
 ]
 
 # Build a lookup: numeric choice → (config_key, display_name) for O(1) selection
@@ -46,10 +47,21 @@ _SETTINGS_LOOKUP: Dict[str, Tuple[str, str]] = {num: (key, name) for num, key, n
 KV_QUANT_OPTIONS = ["turbo4", "turbo3", "turbo2", "q8_0", "q4_0", "iq4_nl", "none"]
 
 # Settings that use the on/off/none toggle editor
-_TOGGLE_KEYS: frozenset = frozenset({"mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision", "mtp"})
+_TOGGLE_KEYS: frozenset = frozenset({"mmap", "flash_attention", "thinking", "p_thinking", "jinja", "vision", "mtp", "mmproj_offload"})
 
 # Settings that use the KV-quant dropdown editor
 _KV_QUANT_KEYS: frozenset = frozenset({"k_quant", "v_quant"})
+
+# Settings that are only relevant (and visible) when vision is enabled (on).
+# Hidden from the menu and display when vision is off/none.
+_VISION_DEPENDENT: frozenset = frozenset({"image_min_tokens", "mmproj_offload"})
+
+
+def _is_visible(settings: Dict[str, Any], key: str) -> bool:
+    """Return True if *key* should be shown; vision-dependent keys are hidden when vision is not on."""
+    if key in _VISION_DEPENDENT and settings.get("vision") is not True:
+        return False
+    return True
 
 
 # --- Value editors (each mutates settings[key]) ---
@@ -206,6 +218,11 @@ def _fmt_image_min_tokens(settings: Dict[str, Any]) -> str:
     return str(image_min_tokens) if isinstance(image_min_tokens, int) and image_min_tokens > 0 else "disabled"
 
 
+def _fmt_mmproj_offload(settings: Dict[str, Any]) -> str:
+    mmproj_val = settings.get("mmproj_offload")
+    return "on" if mmproj_val is True else ("off" if mmproj_val is False else "none")
+
+
 def _fmt_tensor_split(settings: Dict[str, Any]) -> str:
     ts = settings.get("tensor_split")
     if ts is not None and isinstance(ts, list):
@@ -218,6 +235,7 @@ _FORMATTERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
     "mtp": _fmt_mtp,
     "draft_n_max": _fmt_draft_n_max,
     "image_min_tokens": _fmt_image_min_tokens,
+    "mmproj_offload": _fmt_mmproj_offload,
     "tensor_split": _fmt_tensor_split,
 }
 
@@ -229,7 +247,7 @@ _DISPLAY_SECTIONS: List[Tuple[str, List[str]]] = [
     ]),
     ("Generation Settings", [
         "temp", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty",
-        "thinking", "p_thinking", "jinja", "vision", "image_min_tokens",
+        "thinking", "p_thinking", "jinja", "vision", "image_min_tokens", "mmproj_offload",
     ]),
     ("Multi-GPU Settings", ["tensor_split"]),
 ]
@@ -246,6 +264,8 @@ def _display_section(title: str, keys: List[str], settings: Dict[str, Any]) -> N
     name_by_key = {key: name for _num, key, name in SETTINGS_INFO}
     print(f"\n--- {title} ---")
     for key in keys:
+        if not _is_visible(settings, key):
+            continue
         print(f"  {name_by_key[key] + ':':<20} {_format_value(settings, key)}")
 
 
@@ -260,14 +280,18 @@ def display_settings(settings: Dict[str, Any]) -> None:
 
 
 def display_settings_menu(settings: Dict[str, Any]) -> None:
-    """Display the settings menu."""
+    """Display the settings menu (vision-dependent entries are hidden while vision is off/none)."""
     print("\nAvailable settings to modify:")
     print("=" * 60)
 
     for num, key, name in SETTINGS_INFO:
+        if not _is_visible(settings, key):
+            continue
         current = settings.get(key, "(not set)")
         print(f"  {num}. {name:<18} [{current}]")
 
+    if not all(_is_visible(settings, key) for _num, key, _name in SETTINGS_INFO):
+        print("  (Vision-dependent settings are hidden while Vision is not on)")
     print("=" * 60)
 
 
@@ -289,6 +313,10 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         key, name = selected
+        if not _is_visible(settings, key):
+            print(f"[INFO] {name} is available only when Vision is on. Enable Vision first.")
+            continue
+
         current = settings.get(key, "(not set)")
         print(f"\nCurrent value for {name}: {current}")
 

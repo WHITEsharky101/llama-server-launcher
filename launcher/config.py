@@ -89,7 +89,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "jinja": None,
         "vision": None,
         "image_min_tokens": None,
-        "tensor_split": None
+        "tensor_split": None,
+        "mmproj_offload": None
     }
 }
 

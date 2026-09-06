@@ -136,6 +136,7 @@ def test_vision_without_mmproj_warns(fake_exe, tmp_path, capsys):
 
 def test_image_min_tokens(fake_exe):
     s = default_settings()
+    s["vision"] = True
     s["image_min_tokens"] = 256
     cmd = command.build_command("m.gguf", s, "h", 1, "")
     assert has_seq(cmd, ["--image-min-tokens", "256"])
@@ -146,6 +147,49 @@ def test_image_min_tokens(fake_exe):
 
 
 # --- MTP / tensor split ---
+
+def test_mmproj_offload_flag(fake_exe, tmp_path):
+    (tmp_path / "mmproj-blob.gguf").write_bytes(b"x")
+    model_path = str(tmp_path / "model.gguf")
+    s = default_settings()
+    s["vision"] = True
+    s["mmproj_offload"] = False
+    cmd = command.build_command(model_path, s, "h", 1, "")
+    assert has_seq(cmd, ["--mmproj", str(tmp_path / "mmproj-blob.gguf"), "--no-mmproj-offload"])
+
+
+def test_mmproj_offload_on_or_none_no_flag(fake_exe, tmp_path):
+    (tmp_path / "mmproj-blob.gguf").write_bytes(b"x")
+    model_path = str(tmp_path / "model.gguf")
+    for offload in (True, None):
+        s = default_settings()
+        s["vision"] = True
+        s["mmproj_offload"] = offload
+        cmd = command.build_command(model_path, s, "h", 1, "")
+        assert "--mmproj" in cmd
+        assert "--no-mmproj-offload" not in cmd
+
+
+def test_mmproj_offload_ignored_when_vision_disabled(fake_exe, tmp_path):
+    (tmp_path / "mmproj-blob.gguf").write_bytes(b"x")
+    model_path = str(tmp_path / "model.gguf")
+    for vision in (False, None):
+        s = default_settings()
+        s["vision"] = vision
+        s["mmproj_offload"] = False
+        cmd = command.build_command(model_path, s, "h", 1, "")
+        assert "--mmproj" not in cmd
+        assert "--no-mmproj-offload" not in cmd
+
+
+def test_image_min_tokens_suppressed_when_vision_disabled(fake_exe):
+    for vision in (False, None):
+        s = default_settings()
+        s["vision"] = vision
+        s["image_min_tokens"] = 256
+        cmd = command.build_command("m.gguf", s, "h", 1, "")
+        assert "--image-min-tokens" not in cmd
+
 
 def test_mtp_flags(fake_exe):
     s = default_settings()
