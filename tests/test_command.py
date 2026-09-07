@@ -1,7 +1,5 @@
 """Tests for launcher/command.py: command builder flag generation and ordering."""
 
-import json
-
 import pytest
 
 from launcher import command
@@ -40,14 +38,15 @@ def test_build_command_head_and_fixed_flags(fake_exe):
     assert cmd[1:3] == ["--model", r"C:\m\a.gguf"]
     # Fixed server settings block
     assert has_seq(cmd, ["--host", "10.0.0.5", "--port", "5056"])
-    assert "--no-webui" in cmd
+    assert "--no-ui" in cmd
     assert has_seq(cmd, ["-mg", "0"])
     assert "--n-predict" not in cmd
     # Trailing fixed flags, in order
     assert "--no-slots" in cmd
+    assert has_seq(cmd, ["--fit", "off"])
     assert has_seq(cmd, ["--timeout", "30000"])
     assert has_seq(cmd, ["-n", "-1"])
-    assert cmd.index("--no-slots") < cmd.index("--timeout") < cmd.index("-n")
+    assert cmd.index("--no-slots") < cmd.index("--fit") < cmd.index("--timeout") < cmd.index("-n")
 
 
 def test_simple_params_present_with_defaults(fake_exe):
@@ -167,15 +166,20 @@ def test_build_command_context_scalar_unchanged(fake_exe):
 
 # --- boolean flags ---
 
-def test_mmap_false_adds_no_mmap(fake_exe):
+def test_mmap_false_adds_load_mode_none(fake_exe):
     s = default_settings()
     s["mmap"] = False
     cmd = command.build_command("m.gguf", s, "h", 1, "")
-    assert "--no-mmap" in cmd
+    assert has_seq(cmd, ["--load-mode", "none"])
+    assert "--no-mmap" not in cmd
 
     s["mmap"] = True
     cmd = command.build_command("m.gguf", s, "h", 1, "")
-    assert "--no-mmap" not in cmd
+    assert "--load-mode" not in cmd
+
+    s["mmap"] = None
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert "--load-mode" not in cmd
 
 
 def test_flash_attn_and_jinja_flags(fake_exe):
@@ -187,22 +191,42 @@ def test_flash_attn_and_jinja_flags(fake_exe):
     assert "--jinja" in cmd
 
 
-def test_chat_template_kwargs(fake_exe):
+def test_reasoning_flag(fake_exe):
     s = default_settings()
     s["thinking"] = True
     s["p_thinking"] = False
     cmd = command.build_command("m.gguf", s, "h", 1, "")
-    kwargs_idx = cmd.index("--chat-template-kwargs")
-    kwargs = json.loads(cmd[kwargs_idx + 1])
-    assert kwargs == {"enable_thinking": True, "preserve_thinking": False}
+    assert has_seq(cmd, ["--reasoning", "on"])
+    assert "--reasoning-preserve" not in cmd
+    assert "--no-reasoning-preserve" in cmd
+    assert "--chat-template-kwargs" not in cmd
+
+    s["thinking"] = False
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["--reasoning", "off"])
 
 
-def test_chat_template_kwargs_omitted_when_none(fake_exe):
+def test_reasoning_omitted_when_none(fake_exe):
     s = default_settings()
     s["thinking"] = None
     s["p_thinking"] = None
     cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert "--reasoning" not in cmd
+    # preserve is forced off by default (suppresses the "enabled by default" notice)
+    assert "--no-reasoning-preserve" in cmd
     assert "--chat-template-kwargs" not in cmd
+
+
+def test_reasoning_preserve_flag(fake_exe):
+    for value, expected in ((True, "--reasoning-preserve"),
+                            (False, "--no-reasoning-preserve"),
+                            (None, "--no-reasoning-preserve")):
+        s = default_settings()
+        s["p_thinking"] = value
+        cmd = command.build_command("m.gguf", s, "h", 1, "")
+        assert expected in cmd
+        assert sum(1 for f in ("--reasoning-preserve", "--no-reasoning-preserve") if f in cmd) == 1
+        assert "--chat-template-kwargs" not in cmd
 
 
 # --- vision ---

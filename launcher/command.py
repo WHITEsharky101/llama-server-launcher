@@ -4,7 +4,6 @@ build_command() assembles the full command in the exact same flag order as the
 original single-file script; each feature is an independent _append_* helper.
 """
 
-import json
 import os
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
@@ -123,9 +122,11 @@ def _append_context(cmd: List[str], settings: Dict[str, Any]) -> None:
 
 
 def _append_mmap(cmd: List[str], settings: Dict[str, Any]) -> None:
-    """mmap (--no-mmap): False explicitly disables memory-mapped file loading."""
+    """mmap: False explicitly disables memory-mapped loading (--load-mode none).
+
+    True/None keep the llama.cpp default (auto) and add no flag."""
     if settings.get("mmap") is False:
-        cmd.append("--no-mmap")
+        cmd += ["--load-mode", "none"]
 
 
 def _append_flash_attn(cmd: List[str], settings: Dict[str, Any]) -> None:
@@ -134,15 +135,25 @@ def _append_flash_attn(cmd: List[str], settings: Dict[str, Any]) -> None:
         cmd += ["-fa", "on"]
 
 
-def _append_chat_template_kwargs(cmd: List[str], settings: Dict[str, Any]) -> None:
-    """Chat Template Kwargs: merge thinking + preserve_thinking into a single argument."""
-    chat_kwargs: dict = {}
-    if (thinking_val := settings.get("thinking")) is not None and isinstance(thinking_val, bool):
-        chat_kwargs["enable_thinking"] = thinking_val
-    if (p_thinking_val := settings.get("p_thinking")) is not None and isinstance(p_thinking_val, bool):
-        chat_kwargs["preserve_thinking"] = p_thinking_val
-    if chat_kwargs:
-        cmd += ["--chat-template-kwargs", json.dumps(chat_kwargs)]
+def _append_reasoning(cmd: List[str], settings: Dict[str, Any]) -> None:
+    """Thinking: --reasoning on/off (replaces the deprecated enable_thinking kwarg)."""
+    thinking_val = settings.get("thinking")
+    if thinking_val is True:
+        cmd += ["--reasoning", "on"]
+    elif thinking_val is False:
+        cmd += ["--reasoning", "off"]
+
+
+def _append_reasoning_preserve(cmd: List[str], settings: Dict[str, Any]) -> None:
+    """Preserve thinking: --reasoning-preserve / --no-reasoning-preserve.
+
+    Replaces the deprecated preserve_thinking chat-template kwarg. When the
+    setting is off or unset the flag is forced to --no-reasoning-preserve, which
+    also suppresses the "enabled by default (may use more tokens)" notice."""
+    if settings.get("p_thinking") is True:
+        cmd.append("--reasoning-preserve")
+    else:
+        cmd.append("--no-reasoning-preserve")
 
 
 def _append_jinja(cmd: List[str], settings: Dict[str, Any]) -> None:
@@ -174,7 +185,7 @@ def _append_image_min_tokens(cmd: List[str], settings: Dict[str, Any]) -> None:
 def _append_server_settings(cmd: List[str], host: str, port: int) -> None:
     """Host/port plus fixed server flags."""
     cmd += ["--host", host, "--port", str(port)]
-    cmd.append("--no-webui")
+    cmd.append("--no-ui")
     cmd += ["-mg", "0"]
 
 
@@ -198,7 +209,7 @@ def _append_fixed_flags(cmd: List[str]) -> None:
     """Flags that are always appended at the end."""
     cmd.append("--no-slots")
     #cmd.append("--swa-full")
-    #cmd += ["--reasoning", "off"]
+    cmd += ["--fit", "off"]  # avoid "failed to fit params" warning (n_gpu_layers is set)
     cmd += ["--timeout", "30000"]
     cmd += ["-n", "-1"]
 
@@ -217,7 +228,8 @@ def build_command(
     _append_simple_params(cmd, settings)
     _append_mmap(cmd, settings)
     _append_flash_attn(cmd, settings)
-    _append_chat_template_kwargs(cmd, settings)
+    _append_reasoning(cmd, settings)
+    _append_reasoning_preserve(cmd, settings)
     _append_jinja(cmd, settings)
     _append_vision(cmd, settings, model_path)
     _append_image_min_tokens(cmd, settings)
