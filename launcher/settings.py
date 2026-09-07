@@ -7,7 +7,7 @@ a table entry (plus an editor if it needs non-free-text input).
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from launcher.command import format_number
+from launcher.command import _normalize_context, format_number, is_vision_on_gpu, resolve_context
 
 # === Settings Menu Definition (shared between display_settings_menu and edit_settings) ===
 # Each entry: (display_number, config_key, human_readable_name)
@@ -136,6 +136,64 @@ def _edit_tensor_split(settings: Dict[str, Any], key: str, name: str) -> None:
             print("Invalid input. Enter a number (e.g. '60' or '75.5').")
 
 
+def _read_context_value(prompt: str) -> Optional[int]:
+    """Read a positive integer context value; empty/'none'/'null' means unset (fallback)."""
+    print(prompt)
+    while True:
+        raw = input("> ").strip().lower()
+        if raw == "" or raw in ("none", "null"):
+            return None
+        try:
+            val = int(raw)
+        except ValueError:
+            print("Invalid input. Enter a positive integer (or 'none').")
+            continue
+        if val <= 0:
+            print("Value must be a positive integer (> 0).")
+            continue
+        return val
+
+
+def _edit_context(settings: Dict[str, Any], key: str, name: str) -> None:
+    """Context editor: shows and edits only the value active for the current vision state.
+
+    Settings store [base, gpu]; only the slot that will actually be used at launch
+    (given the current vision / MMProj Offload settings) is displayed and editable.
+    Legacy scalars are treated as the base value (no separate gpu value was ever set)."""
+    raw = settings.get(key)
+    base, gpu = _normalize_context(raw)
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        gpu = None  # Legacy scalar: no separate gpu value was ever set
+
+    on_gpu = is_vision_on_gpu(settings)
+    mode = "vision on GPU" if on_gpu else "vision off / mmproj in RAM"
+    current = resolve_context(settings)
+
+    print(f"Mode: {mode}")
+    print(f"Context for this mode (currently: {current if current is not None else 'unset'}):")
+    value = _read_context_value("New value (or 'none' to clear):")
+
+    if value is None:
+        if on_gpu:
+            gpu = None
+        else:
+            base = None
+    else:
+        if on_gpu:
+            gpu = value
+        else:
+            base = value
+
+    if base is None and gpu is None:
+        settings[key] = None
+    elif base is None:
+        settings[key] = [None, gpu]
+    elif gpu is None or gpu == base:
+        settings[key] = base  # single value = same for both modes (legacy-compatible)
+    else:
+        settings[key] = [base, gpu]
+
+
 def _read_positive_int(prompt: str) -> Optional[int]:
     """Read a positive integer; returns None for empty/'none'/'null' input."""
     print(prompt)
@@ -186,6 +244,7 @@ def _edit_free_text(settings: Dict[str, Any], key: str, name: str) -> None:
 
 # Registry of keys that need a dedicated (non-free-text) editor
 _SPECIAL_EDITORS: Dict[str, Callable[[Dict[str, Any], str, str], None]] = {
+    "context": _edit_context,
     "tensor_split": _edit_tensor_split,
     "draft_n_max": _edit_draft_n_max,
     "image_min_tokens": _edit_image_min_tokens,
@@ -202,6 +261,12 @@ def _editor_for(key: str) -> Callable[[Dict[str, Any], str, str], None]:
 
 
 # --- Display ---
+
+def _fmt_context(settings: Dict[str, Any]) -> str:
+    """Context display: only the value active for the current vision state."""
+    effective = resolve_context(settings)
+    return str(effective) if effective is not None else "N/A"
+
 
 def _fmt_mtp(settings: Dict[str, Any]) -> str:
     mtp_val = settings.get("mtp")
@@ -232,6 +297,7 @@ def _fmt_tensor_split(settings: Dict[str, Any]) -> str:
 
 # Keys that need non-trivial display formatting
 _FORMATTERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
+    "context": _fmt_context,
     "mtp": _fmt_mtp,
     "draft_n_max": _fmt_draft_n_max,
     "image_min_tokens": _fmt_image_min_tokens,
@@ -287,7 +353,7 @@ def display_settings_menu(settings: Dict[str, Any]) -> None:
     for num, key, name in SETTINGS_INFO:
         if not _is_visible(settings, key):
             continue
-        current = settings.get(key, "(not set)")
+        current = _format_value(settings, key) if key in settings else "(not set)"
         print(f"  {num}. {name:<18} [{current}]")
 
     if not all(_is_visible(settings, key) for _num, key, _name in SETTINGS_INFO):
@@ -317,13 +383,13 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[INFO] {name} is available only when Vision is on. Enable Vision first.")
             continue
 
-        current = settings.get(key, "(not set)")
+        current = _format_value(settings, key) if key in settings else "(not set)"
         print(f"\nCurrent value for {name}: {current}")
 
         editor = _editor_for(key)
         editor(settings, key, name)
 
-        print(f"[OK] {name} set to: {settings[key]}")
+        print(f"[OK] {name} set to: {_format_value(settings, key)}")
         display_settings_menu(settings)
         print("Enter the number of the setting to modify (0 when done):")
 

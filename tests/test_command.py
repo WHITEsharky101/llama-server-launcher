@@ -74,6 +74,97 @@ def test_none_or_zero_params_are_omitted(fake_exe):
     assert "-np" not in cmd
 
 
+# --- context resolution (vision-aware) ---
+
+def test_resolve_context_scalar_is_vision_agnostic():
+    """Legacy scalar context is used in every mode."""
+    for vision in (True, False, None):
+        s = {"context": 32768, "vision": vision}
+        assert command.resolve_context(s) == 32768
+
+
+def test_resolve_context_array_vision_on_gpu():
+    """Vision enabled + mmproj on GPU (default / offload on) -> gpu element."""
+    s = {"context": [65536, 32768], "vision": True}
+    assert command.resolve_context(s) == 32768
+    s["mmproj_offload"] = True
+    assert command.resolve_context(s) == 32768
+
+
+def test_resolve_context_array_vision_on_cpu_offload():
+    """Vision enabled but mmproj offloaded to RAM -> base element."""
+    s = {"context": [65536, 32768], "vision": True, "mmproj_offload": False}
+    assert command.resolve_context(s) == 65536
+
+
+def test_resolve_context_array_vision_disabled():
+    """Vision off/none -> base element regardless of mmproj_offload."""
+    for vision in (False, None):
+        for offload in (False, True, None):
+            s = {"context": [65536, 32768], "vision": vision, "mmproj_offload": offload}
+            assert command.resolve_context(s) == 65536
+
+
+def test_resolve_context_array_gpu_unset_falls_back_to_base():
+    """Single-element array or None gpu value -> base."""
+    assert command.resolve_context({"context": [65536], "vision": True}) == 65536
+    assert command.resolve_context({"context": [65536, None], "vision": True}) == 65536
+
+
+def test_resolve_context_array_gpu_zero_falls_back_to_base():
+    """Non-positive gpu value is treated as unset -> base."""
+    assert command.resolve_context({"context": [65536, 0], "vision": True}) == 65536
+
+
+def test_resolve_context_missing():
+    assert command.resolve_context({}) is None
+    assert command.resolve_context({"context": None, "vision": True}) is None
+
+
+def test_is_vision_on_gpu():
+    assert command.is_vision_on_gpu({"vision": True}) is True
+    assert command.is_vision_on_gpu({"vision": True, "mmproj_offload": False}) is False
+    assert command.is_vision_on_gpu({"vision": False}) is False
+    assert command.is_vision_on_gpu({}) is False
+
+
+def test_build_command_context_vision_on_gpu(fake_exe):
+    s = default_settings()
+    s["context"] = [140000, 98000]
+    s["vision"] = True
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["-c", "98000"])
+    assert "-c" not in cmd[cmd.index("-c") + 2:]  # exactly one -c flag
+
+
+def test_build_command_context_vision_off(fake_exe):
+    for vision in (False, None):
+        s = default_settings()
+        s["context"] = [140000, 98000]
+        s["vision"] = vision
+        cmd = command.build_command("m.gguf", s, "h", 1, "")
+        assert has_seq(cmd, ["-c", "140000"])
+
+
+def test_build_command_context_vision_offloaded_to_ram(fake_exe):
+    s = default_settings()
+    s["context"] = [140000, 98000]
+    s["vision"] = True
+    s["mmproj_offload"] = False
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["-c", "140000"])
+
+
+def test_build_command_context_scalar_unchanged(fake_exe):
+    """Legacy scalar context keeps working in every mode."""
+    for vision in (True, False, None):
+        s = default_settings()
+        s["context"] = 32768
+        s["vision"] = vision
+        cmd = command.build_command("m.gguf", s, "h", 1, "")
+        assert has_seq(cmd, ["-c", "32768"])
+
+
 # --- boolean flags ---
 
 def test_mmap_false_adds_no_mmap(fake_exe):

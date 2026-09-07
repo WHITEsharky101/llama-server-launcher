@@ -7,14 +7,13 @@ original single-file script; each feature is an independent _append_* helper.
 import json
 import os
 from functools import lru_cache
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from launcher import config, models
 
 
 # === Simple parameter mapping: setting_key → CLI flag ===
 SIMPLE_PARAM_MAP = [
-    ("context", "-c"),
     ("gpu_offload", "-ngl"),
     ("cpu_moe", "--n-cpu-moe"),
     ("threads", "-t"),
@@ -76,6 +75,51 @@ def _append_simple_params(cmd: List[str], settings: Dict[str, Any]) -> None:
     """Append flag+value pairs for all simple settings."""
     for key, flag in SIMPLE_PARAM_MAP:
         _add_simple_param(cmd, flag, settings.get(key))
+
+
+# --- Context resolution (vision-aware) ---
+#
+# 'context' can be either:
+#   int  — single context length used in all modes (legacy format)
+#   [base, gpu_vision] — base context for vision off / mmproj offloaded to RAM,
+#                        gpu_vision context for vision enabled on GPU.
+# A missing/None gpu_vision element falls back to the base value.
+
+def is_vision_on_gpu(settings: Dict[str, Any]) -> bool:
+    """True when vision is enabled and the mmproj stays on the GPU.
+
+    Matches the --no-mmproj-offload condition in _append_vision(): the mmproj is
+    offloaded to RAM only when mmproj_offload is explicitly False."""
+    return settings.get("vision") is True and settings.get("mmproj_offload") is not False
+
+
+def _normalize_context(raw: Any) -> Tuple[Optional[int], Optional[int]]:
+    """Normalize a context value (scalar or [base, gpu_vision]) to (base, gpu_vision)."""
+    if isinstance(raw, bool):
+        return None, None
+    if isinstance(raw, int):
+        return raw, raw
+    if isinstance(raw, (list, tuple)):
+        base = raw[0] if len(raw) > 0 else None
+        gpu = raw[1] if len(raw) > 1 else None
+        return base, gpu
+    return None, None
+
+
+def resolve_context(settings: Dict[str, Any]) -> Optional[int]:
+    """Return the effective context length for the current vision state.
+
+    Vision on GPU  -> [base, gpu_vision][1] (falls back to base when unset)
+    Otherwise      -> base value"""
+    base, gpu_vision = _normalize_context(settings.get("context"))
+    if is_vision_on_gpu(settings):
+        return gpu_vision if isinstance(gpu_vision, int) and gpu_vision > 0 else base
+    return base
+
+
+def _append_context(cmd: List[str], settings: Dict[str, Any]) -> None:
+    """-c with the vision-resolved context length."""
+    _add_simple_param(cmd, "-c", resolve_context(settings))
 
 
 def _append_mmap(cmd: List[str], settings: Dict[str, Any]) -> None:
@@ -169,6 +213,7 @@ def build_command(
         return []
 
     cmd: List[str] = [server_exe, "--model", model_path]
+    _append_context(cmd, settings)
     _append_simple_params(cmd, settings)
     _append_mmap(cmd, settings)
     _append_flash_attn(cmd, settings)
