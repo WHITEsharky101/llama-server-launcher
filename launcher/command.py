@@ -209,7 +209,7 @@ def _append_fixed_flags(cmd: List[str]) -> None:
     """Flags that are always appended at the end."""
     cmd.append("--no-slots")
     #cmd.append("--swa-full")
-    cmd += ["--fit", "off"]  # avoid "failed to fit params" warning (n_gpu_layers is set)
+    cmd += ["--fit", "off"]
     cmd += ["--timeout", "30000"]
     cmd += ["-n", "-1"]
 

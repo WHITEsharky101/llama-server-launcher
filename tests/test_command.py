@@ -212,7 +212,6 @@ def test_reasoning_omitted_when_none(fake_exe):
     s["p_thinking"] = None
     cmd = command.build_command("m.gguf", s, "h", 1, "")
     assert "--reasoning" not in cmd
-    # preserve is forced off by default (suppresses the "enabled by default" notice)
     assert "--no-reasoning-preserve" in cmd
     assert "--chat-template-kwargs" not in cmd
 

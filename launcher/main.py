@@ -158,8 +158,6 @@ def main():
             model_settings = _handle_edit_settings(cfg, model_key, model_settings, current_preset)
 
         elif action == "3":
-            # Switch preset — use base (raw) settings so edits save correctly.
-            # Overrides are only applied at launch and display time.
             current_preset, model_settings = _handle_switch_preset(cfg, model_key, current_preset)
 
         elif action == "4":

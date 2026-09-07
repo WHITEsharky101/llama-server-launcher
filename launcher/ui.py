@@ -71,7 +71,7 @@ def switch_preset(config: Dict[str, Any], model_key: str, current_preset: str) -
     """Display preset selection menu and return (new_preset_slug, base_settings)."""
     print("\n--- Select a Preset ---\n")
 
-    available = list(PRESETS.items())  # [("rp", Preset), ...]
+    available = list(PRESETS.items())
     for i, (slug, preset) in enumerate(available, 1):
         marker = " [current]" if slug == current_preset else ""
         print(f"  {i}. {preset.display}{marker}")

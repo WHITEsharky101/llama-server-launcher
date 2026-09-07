@@ -56,10 +56,30 @@ _KV_QUANT_KEYS: frozenset = frozenset({"k_quant", "v_quant"})
 # Hidden from the menu and display when vision is off/none.
 _VISION_DEPENDENT: frozenset = frozenset({"image_min_tokens", "mmproj_offload"})
 
+# Settings that are only relevant (and visible) when MTP is enabled (on).
+# Hidden from the menu and display when MTP is off/none.
+_MTP_DEPENDENT: frozenset = frozenset({"draft_n_max"})
+
+# Human-readable name of the setting each hidden key depends on, used for
+# the info message when the user tries to edit a hidden entry.
+_DEPENDENCY_HINT: Dict[str, str] = {
+    "image_min_tokens": "Vision",
+    "mmproj_offload": "Vision",
+    "draft_n_max": "MTP",
+    "p_thinking": "Thinking",
+}
+
 
 def _is_visible(settings: Dict[str, Any], key: str) -> bool:
-    """Return True if *key* should be shown; vision-dependent keys are hidden when vision is not on."""
+    """Return True if *key* should be shown.
+
+    Vision-dependent keys are hidden when vision is not on; MTP-dependent keys
+    when MTP is not on; Preserve Think when Thinking is not on."""
     if key in _VISION_DEPENDENT and settings.get("vision") is not True:
+        return False
+    if key in _MTP_DEPENDENT and settings.get("mtp") is not True:
+        return False
+    if key == "p_thinking" and settings.get("thinking") is not True:
         return False
     return True
 
@@ -213,18 +233,12 @@ def _read_positive_int(prompt: str) -> Optional[int]:
 
 
 def _edit_draft_n_max(settings: Dict[str, Any], key: str, name: str) -> None:
-    """Draft N Max: positive integer, ignored when MTP is not enabled."""
-    if settings.get("mtp") is not True:
-        print("[INFO] MTP is not enabled (on). Draft N Max will be ignored at launch.")
-        print("Enable MTP first if you want this setting to take effect.")
+    """Draft N Max: positive integer (only reachable while MTP is on)."""
     settings[key] = _read_positive_int("Enter a positive integer value for max draft tokens (or 'none' to clear):")
 
 
 def _edit_image_min_tokens(settings: Dict[str, Any], key: str, name: str) -> None:
-    """Image Min Tokens: positive integer for --image-min-tokens N."""
-    if settings.get("vision") is not True:
-        print("[INFO] Vision is not enabled (on). Image Min Tokens will be ignored at launch.")
-        print("Enable Vision first if you want this setting to take effect.")
+    """Image Min Tokens: positive integer (only reachable while Vision is on)."""
     settings[key] = _read_positive_int("Enter a positive integer value for image min tokens (or 'none' to clear):")
 
 
@@ -275,7 +289,7 @@ def _fmt_mtp(settings: Dict[str, Any]) -> str:
 
 def _fmt_draft_n_max(settings: Dict[str, Any]) -> str:
     draft_val = settings.get("draft_n_max")
-    return str(draft_val) if settings.get("mtp") is True else "(ignored)"
+    return str(draft_val)
 
 
 def _fmt_image_min_tokens(settings: Dict[str, Any]) -> str:
@@ -346,7 +360,7 @@ def display_settings(settings: Dict[str, Any]) -> None:
 
 
 def display_settings_menu(settings: Dict[str, Any]) -> None:
-    """Display the settings menu (vision-dependent entries are hidden while vision is off/none)."""
+    """Display the settings menu (dependent entries are hidden while their prerequisite is not on)."""
     print("\nAvailable settings to modify:")
     print("=" * 60)
 
@@ -355,9 +369,6 @@ def display_settings_menu(settings: Dict[str, Any]) -> None:
             continue
         current = _format_value(settings, key) if key in settings else "(not set)"
         print(f"  {num}. {name:<18} [{current}]")
-
-    if not all(_is_visible(settings, key) for _num, key, _name in SETTINGS_INFO):
-        print("  (Vision-dependent settings are hidden while Vision is not on)")
     print("=" * 60)
 
 
@@ -380,7 +391,8 @@ def edit_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
 
         key, name = selected
         if not _is_visible(settings, key):
-            print(f"[INFO] {name} is available only when Vision is on. Enable Vision first.")
+            dep = _DEPENDENCY_HINT.get(key, "its prerequisite")
+            print(f"[INFO] {name} is available only when {dep} is on. Enable {dep} first.")
             continue
 
         current = _format_value(settings, key) if key in settings else "(not set)"

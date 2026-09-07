@@ -68,7 +68,7 @@ def launch_server(cmd: List[str]) -> bool:
                 user_stopped_via_q = True
                 break
 
-            if process.poll() is not None:  # Process exited on its own
+            if process.poll() is not None:
                 break
 
             time.sleep(0.05)
