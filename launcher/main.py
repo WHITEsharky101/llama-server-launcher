@@ -39,6 +39,7 @@ def _handle_launch(
         host=host,
         port=port,
         api_key=api_key,
+        model_name=selected_model.display,
     )
 
     if cmd:

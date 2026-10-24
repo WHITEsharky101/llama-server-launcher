@@ -338,6 +338,152 @@ def test_tensor_split_formatting(fake_exe):
     assert "--tensor-split" not in cmd
 
 
+# --- custom flags ---
+
+def test_custom_flags_none_or_empty_omitted(fake_exe):
+    for value in (None, "", "   ", "none"):
+        s = default_settings()
+        s["custom_flags"] = value
+        cmd = command.build_command("m.gguf", s, "h", 1, "")
+        # No stray empty tokens; command ends with the fixed flags (no api key)
+        assert cmd[-4:] == ["-n", "-1", "-sm", "tensor"]
+
+
+def test_custom_flags_missing_key_omitted(fake_exe):
+    s = default_settings()
+    s.pop("custom_flags", None)
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert cmd[-4:] == ["-n", "-1", "-sm", "tensor"]
+
+
+def test_custom_flags_single_flag(fake_exe):
+    s = default_settings()
+    s["custom_flags"] = "--swa-full"
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert cmd[-1] == "--swa-full"
+
+
+def test_custom_flags_multiple_tokens(fake_exe):
+    s = default_settings()
+    s["custom_flags"] = "--swa-full --cache-type-k q8_0"
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert cmd[-3:] == ["--swa-full", "--cache-type-k", "q8_0"]
+    # Custom flags are appended after the fixed flags (last-wins ordering)
+    assert cmd.index("--swa-full") > cmd.index("-n")
+
+
+def test_custom_flags_overrides_fixed_flags(fake_exe):
+    """Custom flags come after fixed flags, so a duplicate flag wins.
+
+    The fixed flags emit '--fit off'; the custom flags append '--fit on'
+    after it. llama.cpp uses the last occurrence, so 'on' is effective."""
+    s = default_settings()
+    s["custom_flags"] = "--fit on"
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["--fit", "off"])      # fixed flag present
+    assert has_seq(cmd, ["--fit", "on"])        # custom flag present
+    # The custom occurrence must come after the fixed one
+    last_fit = len(cmd) - 1 - cmd[::-1].index("--fit")
+    first_fit = cmd.index("--fit")
+    assert last_fit > first_fit
+    assert cmd[last_fit + 1] == "on"
+
+
+def test_custom_flags_with_quoted_value(fake_exe):
+    s = default_settings()
+    s["custom_flags"] = '--chat-template-kwargs "x=1 y=2"'
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["--chat-template-kwargs", "x=1 y=2"])
+
+
+def test_custom_flags_unquoted_windows_backslash_path_survives(fake_exe):
+    """Unquoted Windows paths must keep their backslashes (no POSIX escape mangling)."""
+    s = default_settings()
+    s["custom_flags"] = "--mmproj C:\\models\\mm.gguf"
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["--mmproj", "C:\\models\\mm.gguf"])
+    assert "C:modelsmm.gguf" not in cmd  # regression: posix shlex stripped the backslashes
+
+
+def test_custom_flags_mixed_path_and_quoted_value(fake_exe):
+    s = default_settings()
+    s["custom_flags"] = '--system-prompt-file C:\\prompts\\sys.txt --opt "a b"'
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["--system-prompt-file", "C:\\prompts\\sys.txt"])
+    assert has_seq(cmd, ["--opt", "a b"])
+
+
+def test_custom_flags_whitespace_collapses_at_build_time(fake_exe):
+    s = default_settings()
+    s["custom_flags"] = "  --swa-full   --swa-type full  "
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert cmd[-3:] == ["--swa-full", "--swa-type", "full"]
+
+
+def test_custom_flags_unparseable_warns(fake_exe, capsys):
+    s = default_settings()
+    s["custom_flags"] = "--swa-full 'unterminated"
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert "Could not parse custom flags" in capsys.readouterr().out
+    assert cmd[-4:] == ["-n", "-1", "-sm", "tensor"]
+
+
+def test_custom_flags_before_api_key(fake_exe):
+    s = default_settings()
+    s["custom_flags"] = "--swa-full"
+    cmd = command.build_command("m.gguf", s, "h", 1, "secret")
+    assert cmd[-3:] == ["--swa-full", "--api-key", "secret"]
+
+
+# --- model alias ---
+
+def test_alias_uses_model_name_by_default(fake_exe):
+    s = default_settings()
+    cmd = command.build_command(
+        r"C:\m\Qwen3.8-27B-IQ4_XS.gguf", s, "h", 1, "",
+        model_name="unsloth/Qwen3.8-27B-IQ4_XS",
+    )
+    assert has_seq(cmd, ["--alias", "unsloth/Qwen3.8-27B-IQ4_XS"])
+
+
+def test_alias_placed_right_after_model_flag(fake_exe):
+    cmd = command.build_command(r"C:\m\a.gguf", default_settings(), "h", 1, "", model_name="m")
+    assert cmd[1:5] == ["--model", r"C:\m\a.gguf", "--alias", "m"]
+
+
+def test_alias_falls_back_to_file_name_without_model_name(fake_exe):
+    cmd = command.build_command(r"C:\m\Qwen3.8-27B-IQ4_XS.gguf", default_settings(), "h", 1, "")
+    assert has_seq(cmd, ["--alias", "Qwen3.8-27B-IQ4_XS"])
+
+
+def test_alias_setting_overrides_model_name(fake_exe):
+    s = default_settings()
+    s["model_alias"] = "qwen3-coder"
+    cmd = command.build_command(
+        r"C:\m\Qwen3.8-27B-IQ4_XS.gguf", s, "h", 1, "",
+        model_name="unsloth/Qwen3.8-27B-IQ4_XS",
+    )
+    assert has_seq(cmd, ["--alias", "qwen3-coder"])
+
+
+def test_alias_blank_or_none_setting_falls_back_to_model_name(fake_exe):
+    for value in (None, "", "   ", "none"):
+        s = default_settings()
+        s["model_alias"] = value
+        cmd = command.build_command(
+            r"C:\m\Qwen3.8-27B-IQ4_XS.gguf", s, "h", 1, "",
+            model_name="unsloth/Qwen3.8-27B-IQ4_XS",
+        )
+        assert has_seq(cmd, ["--alias", "unsloth/Qwen3.8-27B-IQ4_XS"])
+
+
+def test_alias_case_preserved_from_settings(fake_exe):
+    s = default_settings()
+    s["model_alias"] = "MyModel-V2"
+    cmd = command.build_command("m.gguf", s, "h", 1, "")
+    assert has_seq(cmd, ["--alias", "MyModel-V2"])
+
+
 # --- api key ---
 
 def test_api_key_appended(fake_exe):

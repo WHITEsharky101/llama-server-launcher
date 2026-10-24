@@ -5,6 +5,7 @@ original single-file script; each feature is an independent _append_* helper.
 """
 
 import os
+import shlex
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -121,6 +122,20 @@ def _append_context(cmd: List[str], settings: Dict[str, Any]) -> None:
     _add_simple_param(cmd, "-c", resolve_context(settings))
 
 
+def _append_alias(cmd: List[str], settings: Dict[str, Any], model_path: str, model_name: Optional[str] = None) -> None:
+    """Model Alias: --alias <name> — the model name reported by the API (llama-server -a).
+
+    The settings value 'model_alias' takes precedence; otherwise the model's
+    display name is used, falling back to the .gguf file name when unknown.
+    Consistent with the rest of the app: the literal string "none"/"null" means "unset"."""
+    value = settings.get("model_alias")
+    if isinstance(value, str) and value.strip() and value.strip().lower() not in ("none", "null"):
+        value = value.strip()
+    else:
+        value = model_name or os.path.splitext(os.path.basename(model_path))[0]
+    cmd += ["--alias", value]
+
+
 def _append_mmap(cmd: List[str], settings: Dict[str, Any]) -> None:
     """mmap: False explicitly disables memory-mapped loading (--load-mode none).
 
@@ -208,22 +223,60 @@ def _append_tensor_split(cmd: List[str], settings: Dict[str, Any]) -> None:
 def _append_fixed_flags(cmd: List[str]) -> None:
     """Flags that are always appended at the end."""
     cmd.append("--no-slots")
-    #cmd.append("--swa-full")
     cmd += ["--fit", "off"]
     cmd += ["--timeout", "30000"]
     cmd += ["-n", "-1"]
+    cmd += ["-sm", "tensor"]
+
+
+def _unquote_token(token: str) -> str:
+    """Strip one matching pair of surrounding double quotes from *token*.
+
+    shlex.split(..., posix=False) keeps quote characters literally, so a value the
+    user wrapped in "..." arrives as '"..."'. Remove exactly one pair so the
+    stored flag matches what the user typed; unmatched quotes are left as-is."""
+    if len(token) >= 2 and token[0] == '"' and token[-1] == '"':
+        return token[1:-1]
+    return token
+
+
+def _append_custom_flags(cmd: List[str], settings: Dict[str, Any]) -> None:
+    """Custom Flags: append user-typed extra CLI flags as-is.
+
+    The stored value is a free-form string (e.g. "--cache-type-k q8_0 --swa-full").
+    It is tokenized with shlex.split(posix=False) so quoted values survive AND
+    unquoted Windows backslash paths (e.g. --mmproj C:\\models\\mm.gguf) are not
+    mangled by POSIX escape handling; a matching pair of surrounding quotes on each
+    token is then stripped. Appended after the fixed flags so that any duplicated
+    flag overrides the fixed value (last wins)."""
+    raw = settings.get("custom_flags")
+    if not isinstance(raw, str):
+        return
+    stripped = raw.strip()
+    # Consistent with the rest of the app: the literal string "none"/"null" means "unset".
+    if not stripped or stripped.lower() in ("none", "null"):
+        return
+    try:
+        cmd.extend(_unquote_token(t) for t in shlex.split(raw, posix=False))
+    except ValueError as e:
+        print(f"[WARNING] Could not parse custom flags {raw!r}: {e}")
 
 
 def build_command(
-    model_path: str, settings: Dict[str, Any], host: str, port: int, api_key: str
+    model_path: str, settings: Dict[str, Any], host: str, port: int, api_key: str,
+    model_name: Optional[str] = None,
 ) -> List[str]:
-    """Build the llama-server command with all parameters."""
+    """Build the llama-server command with all parameters.
+
+    *model_name* (the model's display name) feeds the --alias flag when no
+    explicit 'model_alias' setting is stored."""
     server_exe = get_llama_server_path()
     if server_exe is None:
         print("[ERROR] llama-server executable not found!")
         return []
 
     cmd: List[str] = [server_exe, "--model", model_path]
+    _append_alias(cmd, settings, model_path, model_name)
     _append_context(cmd, settings)
     _append_simple_params(cmd, settings)
     _append_mmap(cmd, settings)
@@ -237,6 +290,7 @@ def build_command(
     _append_mtp(cmd, settings)
     _append_tensor_split(cmd, settings)
     _append_fixed_flags(cmd)
+    _append_custom_flags(cmd, settings)
 
     if api_key:
         cmd += ["--api-key", api_key]

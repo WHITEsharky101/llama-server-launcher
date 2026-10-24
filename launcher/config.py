@@ -90,7 +90,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "vision": None,
         "image_min_tokens": None,
         "tensor_split": None,
-        "mmproj_offload": None
+        "mmproj_offload": None,
+        "custom_flags": None,
+        "model_alias": None
     }
 }
 

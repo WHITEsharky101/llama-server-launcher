@@ -38,6 +38,8 @@ SETTINGS_INFO: List[Tuple[str, str, str]] = [
     ("24", "image_min_tokens", "Image Min Tokens"),
     ("25", "mmproj_offload", "MMProj Offload"),
     ("26", "tensor_split", "GPU Tensor Split"),
+    ("27", "custom_flags", "Custom Flags"),
+    ("28", "model_alias", "Model Alias"),
 ]
 
 # Build a lookup: numeric choice → (config_key, display_name) for O(1) selection
@@ -256,12 +258,46 @@ def _edit_free_text(settings: Dict[str, Any], key: str, name: str) -> None:
             settings[key] = new_value
 
 
+def _edit_model_alias(settings: Dict[str, Any], key: str, name: str) -> None:
+    """Model Alias: the model name reported by the API (llama-server --alias).
+
+    Case is preserved (aliases are case-sensitive). Empty input clears the
+    value and reverts to the automatic model name at launch time."""
+    print("Enter the model alias (the name the API reports for this model).")
+    print("Leave empty to revert to the automatic model name.")
+    new_value = input("> ")
+    if new_value.strip() == "" or new_value.strip().lower() in ("none", "null"):
+        settings[key] = None
+    else:
+        settings[key] = new_value.strip()
+
+
+def _edit_custom_flags(settings: Dict[str, Any], key: str, name: str) -> None:
+    """Custom flags: free-form string of extra llama-server CLI flags.
+
+    Case is preserved (flag names/values may be case-sensitive).
+    Empty input clears the value. Internal whitespace is collapsed to single
+    spaces; the raw string is stored and tokenized at command-build time."""
+    print("Enter custom flags (space-separated, e.g. '--cache-type-k q8_0 --swa-full').")
+    print('Tip: quote values with spaces in double quotes, e.g. --opt "a b".')
+    print("Windows backslash paths (e.g. C:\\models\\mm.gguf) work as-is.")
+    print("Leave empty to clear.")
+    new_value = input("> ")
+    if new_value.strip() == "" or new_value.strip().lower() in ("none", "null"):
+        settings[key] = None
+    else:
+        # Collapse internal whitespace runs to a single space, trim ends.
+        settings[key] = " ".join(new_value.split())
+
+
 # Registry of keys that need a dedicated (non-free-text) editor
 _SPECIAL_EDITORS: Dict[str, Callable[[Dict[str, Any], str, str], None]] = {
     "context": _edit_context,
     "tensor_split": _edit_tensor_split,
     "draft_n_max": _edit_draft_n_max,
     "image_min_tokens": _edit_image_min_tokens,
+    "custom_flags": _edit_custom_flags,
+    "model_alias": _edit_model_alias,
 }
 
 
@@ -309,6 +345,18 @@ def _fmt_tensor_split(settings: Dict[str, Any]) -> str:
     return "disabled"
 
 
+def _fmt_custom_flags(settings: Dict[str, Any]) -> str:
+    """Custom Flags display: the raw string, or 'disabled' when unset/empty."""
+    val = settings.get("custom_flags")
+    return val if isinstance(val, str) and val.strip() else "disabled"
+
+
+def _fmt_model_alias(settings: Dict[str, Any]) -> str:
+    """Model Alias display: the stored value, or 'auto (model name)' when unset."""
+    val = settings.get("model_alias")
+    return val if isinstance(val, str) and val.strip() else "auto (model name)"
+
+
 # Keys that need non-trivial display formatting
 _FORMATTERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
     "context": _fmt_context,
@@ -317,13 +365,17 @@ _FORMATTERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
     "image_min_tokens": _fmt_image_min_tokens,
     "mmproj_offload": _fmt_mmproj_offload,
     "tensor_split": _fmt_tensor_split,
+    "custom_flags": _fmt_custom_flags,
+    "model_alias": _fmt_model_alias,
 }
 
 # Display sections in the order shown by the original UI
 _DISPLAY_SECTIONS: List[Tuple[str, List[str]]] = [
     ("Model Parameters", [
+        "model_alias",
         "context", "gpu_offload", "cpu_moe", "threads", "batch_threads", "batch_size", "parallel",
         "mmap", "flash_attention", "k_quant", "v_quant", "mtp", "draft_n_max",
+        "custom_flags",
     ]),
     ("Generation Settings", [
         "temp", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty",
